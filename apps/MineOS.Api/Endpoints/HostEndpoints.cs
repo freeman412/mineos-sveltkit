@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.Options;
 using MineOS.Application.Interfaces;
 
 namespace MineOS.Api.Endpoints;
@@ -13,11 +15,16 @@ public static class HostEndpoints
             Results.Ok(await hostService.GetMetricsAsync(cancellationToken)));
 
         host.MapGet("/metrics/stream",
-            async (HttpContext context, IHostService hostService, CancellationToken cancellationToken) =>
+            async (HttpContext context,
+                IHostService hostService,
+                IOptions<JsonOptions> jsonOptions,
+                CancellationToken cancellationToken) =>
             {
                 // Configure SSE headers
-                context.Response.Headers.ContentType = "text/event-stream";
-                context.Response.Headers.CacheControl = "no-cache";
+                context.Response.ContentType = "text/event-stream";
+                context.Response.Headers["Cache-Control"] = "no-cache";
+                context.Response.Headers["Connection"] = "keep-alive";
+                context.Response.Headers["X-Accel-Buffering"] = "no";
                 context.Response.Headers.Remove("Content-Length");
 
                 // Start the response immediately to send headers and prevent buffering
@@ -29,18 +36,22 @@ public static class HostEndpoints
                     intervalMs = parsed;
                 }
 
-                var jsonOptions = new JsonSerializerOptions
+                var interval = TimeSpan.FromMilliseconds(intervalMs);
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                };
-
-                await foreach (var metrics in hostService.StreamMetricsAsync(
-                                   TimeSpan.FromMilliseconds(intervalMs),
-                                   cancellationToken))
-                {
-                    var payload = JsonSerializer.Serialize(metrics, jsonOptions);
+                    var metrics = await hostService.GetMetricsAsync(cancellationToken);
+                    var payload = JsonSerializer.Serialize(metrics, jsonOptions.Value.SerializerOptions);
                     await context.Response.WriteAsync($"data: {payload}\n\n", cancellationToken);
                     await context.Response.Body.FlushAsync(cancellationToken);
+
+                    try
+                    {
+                        await Task.Delay(interval, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
                 }
             });
 

@@ -33,7 +33,7 @@ public partial class ProcessManager : IProcessManager
 
         var pids = Directory.GetDirectories(PROC_PATH)
             .Select(Path.GetFileName)
-            .Where(name => int.TryParse(name, out _))
+            .Where(name => !string.IsNullOrWhiteSpace(name) && int.TryParse(name, out _))
             .ToList();
 
         foreach (var pidStr in pids)

@@ -1,24 +1,29 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MineOS.Application.Dtos;
 using MineOS.Application.Interfaces;
+using MineOS.Infrastructure.Persistence;
 
 namespace MineOS.Infrastructure.Services;
 
 public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
 {
     private readonly ILogger<BackgroundJobService> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly Channel<BackgroundJob> _jobQueue;
     private readonly ConcurrentDictionary<string, JobState> _jobs;
     private Task? _executingTask;
     private readonly CancellationTokenSource _stoppingCts = new();
 
-    public BackgroundJobService(ILogger<BackgroundJobService> logger)
+    public BackgroundJobService(ILogger<BackgroundJobService> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
+        _scopeFactory = scopeFactory;
         _jobQueue = Channel.CreateUnbounded<BackgroundJob>();
         _jobs = new ConcurrentDictionary<string, JobState>();
     }
@@ -40,6 +45,7 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
 
         _jobs[jobId] = state;
         _jobQueue.Writer.TryWrite(job);
+        PersistJobSync(state);
 
         _logger.LogInformation("Queued job {JobId} ({Type}) for server {ServerName}", jobId, type, serverName);
 
@@ -50,7 +56,7 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
     {
         if (!_jobs.TryGetValue(jobId, out var state))
         {
-            return null;
+            return GetJobStatusFromDb(jobId);
         }
 
         return new JobStatusDto(
@@ -72,6 +78,21 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
     {
         if (!_jobs.TryGetValue(jobId, out var state))
         {
+            var dbState = await GetJobRecordAsync(jobId, cancellationToken);
+            if (dbState == null)
+            {
+                yield break;
+            }
+
+            yield return new JobProgressDto(
+                dbState.JobId,
+                dbState.Type,
+                dbState.ServerName,
+                dbState.Status,
+                dbState.Percentage,
+                dbState.Message ?? dbState.Error,
+                DateTimeOffset.UtcNow
+            );
             yield break;
         }
 
@@ -154,11 +175,13 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
 
         state.Status = "running";
         state.Percentage = 0;
+        PersistJobFireAndForget(state);
 
         var progress = new Progress<JobProgressDto>(p =>
         {
             state.Percentage = p.Percentage;
             state.Message = p.Message;
+            PersistJobFireAndForget(state);
         });
 
         try
@@ -168,6 +191,7 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
             state.Status = "completed";
             state.Percentage = 100;
             state.CompletedAt = DateTimeOffset.UtcNow;
+            PersistJobFireAndForget(state);
 
             _logger.LogInformation("Job {JobId} completed successfully", job.JobId);
         }
@@ -176,6 +200,7 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
             state.Status = "failed";
             state.Error = ex.Message;
             state.CompletedAt = DateTimeOffset.UtcNow;
+            PersistJobFireAndForget(state);
 
             _logger.LogError(ex, "Job {JobId} failed", job.JobId);
         }
@@ -202,8 +227,108 @@ public sealed class BackgroundJobService : IBackgroundJobService, IHostedService
         public string Status { get; set; } = "queued";
         public int Percentage { get; set; }
         public string? Message { get; set; }
-        public DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset StartedAt { get; set; }
         public DateTimeOffset? CompletedAt { get; set; }
         public string? Error { get; set; }
+    }
+
+    private void PersistJobSync(JobState state)
+    {
+        try
+        {
+            UpsertJobAsync(state, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to persist job {JobId}", state.JobId);
+        }
+    }
+
+    private void PersistJobFireAndForget(JobState state)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await UpsertJobAsync(state, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to persist job {JobId}", state.JobId);
+            }
+        });
+    }
+
+    private JobStatusDto? GetJobStatusFromDb(string jobId)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var record = db.Jobs.AsNoTracking().FirstOrDefault(j => j.JobId == jobId);
+            if (record == null)
+            {
+                return null;
+            }
+
+            return new JobStatusDto(
+                record.JobId,
+                record.Type,
+                record.ServerName,
+                record.Status,
+                record.Percentage,
+                record.Message,
+                record.StartedAt,
+                record.CompletedAt,
+                record.Error
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load job {JobId} from database", jobId);
+            return null;
+        }
+    }
+
+    private async Task<Domain.Entities.JobRecord?> GetJobRecordAsync(string jobId, CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.JobId == jobId, cancellationToken);
+    }
+
+    private async Task UpsertJobAsync(JobState state, CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var startedAt = state.StartedAt.ToString("O");
+        var completedAt = state.CompletedAt?.ToString("O");
+        var message = (object?)state.Message ?? DBNull.Value;
+        var error = (object?)state.Error ?? DBNull.Value;
+        var completedAtValue = (object?)completedAt ?? DBNull.Value;
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO Jobs (JobId, Type, ServerName, Status, Percentage, Message, Error, StartedAt, CompletedAt)
+            VALUES ({0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8})
+            ON CONFLICT(JobId) DO UPDATE SET
+                Type = excluded.Type,
+                ServerName = excluded.ServerName,
+                Status = excluded.Status,
+                Percentage = excluded.Percentage,
+                Message = excluded.Message,
+                Error = excluded.Error,
+                StartedAt = excluded.StartedAt,
+                CompletedAt = excluded.CompletedAt;
+            """,
+            state.JobId,
+            state.Type,
+            state.ServerName,
+            state.Status,
+            state.Percentage,
+            message,
+            error,
+            startedAt,
+            completedAtValue);
     }
 }

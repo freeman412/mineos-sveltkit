@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MineOS.Application.Dtos;
 using MineOS.Application.Interfaces;
 using MineOS.Application.Options;
+using MineOS.Infrastructure.Persistence;
 
 namespace MineOS.Infrastructure.Services;
 
@@ -13,60 +15,45 @@ public sealed class BackupService : IBackupService
 {
     private readonly ILogger<BackupService> _logger;
     private readonly HostOptions _hostOptions;
+    private readonly AppDbContext _db;
 
     public BackupService(
         ILogger<BackupService> logger,
-        IOptions<HostOptions> hostOptions)
+        IOptions<HostOptions> hostOptions,
+        AppDbContext db)
     {
         _logger = logger;
         _hostOptions = hostOptions.Value;
+        _db = db;
     }
 
     private string GetServerPath(string serverName) =>
         Path.Combine(_hostOptions.BaseDirectory, _hostOptions.ServersPathSegment, serverName);
 
     private string GetBackupPath(string serverName) =>
-        Path.Combine(_hostOptions.BaseDirectory, "backups", serverName);
+        Path.Combine(_hostOptions.BaseDirectory, _hostOptions.BackupsPathSegment, serverName);
 
     public async Task<IEnumerable<IncrementEntryDto>> ListBackupsAsync(string serverName, CancellationToken cancellationToken)
     {
-        var backupPath = GetBackupPath(serverName);
-        if (!Directory.Exists(backupPath))
+        var jobBackups = await _db.Jobs.AsNoTracking()
+            .Where(j => j.Type == "backup" && j.ServerName == serverName && j.Status == "completed")
+            .ToListAsync(cancellationToken);
+
+        var jobEntries = jobBackups
+            .Select(j => new IncrementEntryDto(
+                j.CompletedAt ?? j.StartedAt,
+                "backup",
+                null,
+                null))
+            .OrderByDescending(j => j.Time)
+            .ToList();
+
+        if (jobEntries.Count > 0)
         {
-            return Enumerable.Empty<IncrementEntryDto>();
+            return jobEntries;
         }
 
-        // Use rdiff-backup v2 syntax to list increments
-        var psi = new ProcessStartInfo
-        {
-            FileName = "rdiff-backup",
-            Arguments = $"list increments \"{backupPath}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(psi);
-        if (process == null)
-        {
-            throw new InvalidOperationException("Failed to start rdiff-backup process");
-        }
-
-        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorOutput = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-
-        if (process.ExitCode != 0)
-        {
-            _logger.LogWarning("rdiff-backup list failed with exit code {ExitCode}: {Error}", process.ExitCode, errorOutput);
-            return Enumerable.Empty<IncrementEntryDto>();
-        }
-
-        _logger.LogInformation("rdiff-backup list output for {ServerName}: {Output}", serverName, output);
-        var increments = ParseIncrementsV2(output);
-        _logger.LogInformation("Parsed {Count} increments for {ServerName}", increments.Count(), serverName);
-        return increments;
+        return await ListRdiffIncrementsAsync(serverName, cancellationToken);
     }
 
     public async Task CreateBackupAsync(string serverName, CancellationToken cancellationToken)
@@ -78,6 +65,8 @@ public sealed class BackupService : IBackupService
         {
             throw new DirectoryNotFoundException($"Server '{serverName}' not found");
         }
+
+        _logger.LogInformation("Creating backup for server {ServerName} at {BackupPath}", serverName, backupPath);
 
         // Ensure backup directory exists
         Directory.CreateDirectory(backupPath);
@@ -150,6 +139,36 @@ public sealed class BackupService : IBackupService
 
     public async Task PruneBackupsAsync(string serverName, int keepCount, CancellationToken cancellationToken)
     {
+        if (keepCount <= 0)
+        {
+            return;
+        }
+
+        var jobBackups = await _db.Jobs
+            .Where(j => j.Type == "backup" && j.ServerName == serverName && j.Status == "completed")
+            .ToListAsync(cancellationToken);
+
+        var orderedJobs = jobBackups
+            .Select(j => new { Job = j, Time = j.CompletedAt ?? j.StartedAt })
+            .OrderByDescending(j => j.Time)
+            .ToList();
+
+        if (orderedJobs.Count > keepCount)
+        {
+            var thresholdTime = orderedJobs[keepCount - 1].Time;
+            var toRemove = orderedJobs.Skip(keepCount).Select(j => j.Job).ToList();
+
+            if (toRemove.Count > 0)
+            {
+                _db.Jobs.RemoveRange(toRemove);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+
+            await PruneRdiffAsync(serverName, thresholdTime, cancellationToken);
+            _logger.LogInformation("Pruned backups for server {ServerName}, keeping {KeepCount}", serverName, keepCount);
+            return;
+        }
+
         var backupPath = GetBackupPath(serverName);
 
         if (!Directory.Exists(backupPath))
@@ -157,31 +176,20 @@ public sealed class BackupService : IBackupService
             return;
         }
 
-        // Use rdiff-backup to remove old increments, keeping only the specified count
-        var psi = new ProcessStartInfo
+        var increments = (await ListRdiffIncrementsAsync(serverName, cancellationToken)).ToList();
+        if (increments.Count <= keepCount)
         {
-            FileName = "rdiff-backup",
-            Arguments = $"remove increments --older-than {keepCount}B \"{backupPath}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(psi);
-        if (process == null)
-        {
-            throw new InvalidOperationException("Failed to start rdiff-backup process");
+            _logger.LogInformation("No backups to prune for server {ServerName}; count={Count}, keep={KeepCount}",
+                serverName, increments.Count, keepCount);
+            return;
         }
 
-        await process.WaitForExitAsync(cancellationToken);
+        var rdiffThresholdTime = increments
+            .OrderByDescending(i => i.Time)
+            .ElementAt(keepCount - 1)
+            .Time;
 
-        if (process.ExitCode != 0)
-        {
-            var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-            throw new InvalidOperationException($"Prune failed: {error}");
-        }
-
+        await PruneRdiffAsync(serverName, rdiffThresholdTime, cancellationToken);
         _logger.LogInformation("Pruned backups for server {ServerName}, keeping {KeepCount}", serverName, keepCount);
     }
 
@@ -231,14 +239,32 @@ public sealed class BackupService : IBackupService
         {
             var trimmed = line.Trim();
 
-            // Skip header lines and "found N increments" lines
-            if (trimmed.Contains("found") || trimmed.Contains("increment") || string.IsNullOrWhiteSpace(trimmed))
+            if (string.IsNullOrWhiteSpace(trimmed))
             {
                 continue;
             }
 
-            // Try to parse as ISO timestamp first
-            if (DateTimeOffset.TryParse(trimmed, out var time))
+            if (trimmed.StartsWith("Found ", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("Current mirror:", StringComparison.OrdinalIgnoreCase))
+            {
+                var mirrorText = trimmed["Current mirror:".Length..].Trim();
+                if (TryParseRdiffTimestamp(mirrorText, out var mirrorTime))
+                {
+                    _logger.LogDebug("Parsed current mirror timestamp: {Time}", mirrorTime);
+                    increments.Add(new IncrementEntryDto(mirrorTime, "backup", null, null));
+                }
+                else
+                {
+                    _logger.LogDebug("Could not parse current mirror line: {Line}", trimmed);
+                }
+                continue;
+            }
+
+            if (TryParseRdiffTimestamp(trimmed, out var time))
             {
                 _logger.LogDebug("Parsed increment timestamp: {Time}", time);
                 increments.Add(new IncrementEntryDto(
@@ -250,25 +276,48 @@ public sealed class BackupService : IBackupService
                 continue;
             }
 
-            // Try to extract timestamp from line (rdiff-backup might prefix with increment type)
-            // Example: "current_mirror.2024-01-10T19:50:59+00:00.data"
-            var match = Regex.Match(trimmed, @"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z))");
-            if (match.Success && DateTimeOffset.TryParse(match.Groups[1].Value, out var extractedTime))
-            {
-                _logger.LogDebug("Extracted increment timestamp from line '{Line}': {Time}", trimmed, extractedTime);
-                increments.Add(new IncrementEntryDto(
-                    extractedTime,
-                    "backup",
-                    null,
-                    null
-                ));
-                continue;
-            }
-
             _logger.LogDebug("Could not parse increment line: {Line}", trimmed);
         }
 
         return increments.OrderByDescending(i => i.Time);
+    }
+
+    private static bool TryParseRdiffTimestamp(string input, out DateTimeOffset time)
+    {
+        time = default;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        var isoMatch = Regex.Match(input,
+            @"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z))");
+        if (isoMatch.Success)
+        {
+            var isoValue = isoMatch.Groups[1].Value;
+            var isoFormats = new[] { "yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.fffffffK" };
+            if (DateTimeOffset.TryParseExact(isoValue, isoFormats, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out time))
+            {
+                return true;
+            }
+        }
+
+        var englishMatch = Regex.Match(input,
+            @"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}\b");
+        if (englishMatch.Success)
+        {
+            var englishValue = englishMatch.Value;
+            var englishFormats = new[] { "ddd MMM d HH:mm:ss yyyy", "ddd MMM dd HH:mm:ss yyyy" };
+            if (DateTimeOffset.TryParseExact(englishValue, englishFormats, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeLocal, out time))
+            {
+                return true;
+            }
+        }
+
+        return DateTimeOffset.TryParse(input, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeLocal, out time);
     }
 
     private IEnumerable<IncrementEntryDto> ParseIncrementSizes(string output)
@@ -298,5 +347,91 @@ public sealed class BackupService : IBackupService
         }
 
         return increments.OrderByDescending(i => i.Time);
+    }
+
+    private async Task PruneRdiffAsync(string serverName, DateTimeOffset thresholdTime, CancellationToken cancellationToken)
+    {
+        var backupPath = GetBackupPath(serverName);
+        if (!Directory.Exists(backupPath))
+        {
+            return;
+        }
+
+        var threshold = thresholdTime.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "rdiff-backup",
+            Arguments = $"remove increments --older-than {threshold} \"{backupPath}\"",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null)
+        {
+            throw new InvalidOperationException("Failed to start rdiff-backup process");
+        }
+
+        var error = await process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+
+        if (process.ExitCode != 0)
+        {
+            if (!string.IsNullOrWhiteSpace(error) &&
+                error.Contains("older than", StringComparison.OrdinalIgnoreCase) &&
+                error.Contains("no", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("No rdiff-backup increments older than cutoff for server {ServerName}", serverName);
+                return;
+            }
+
+            throw new InvalidOperationException($"Prune failed: {error}");
+        }
+    }
+
+    private async Task<IReadOnlyList<IncrementEntryDto>> ListRdiffIncrementsAsync(
+        string serverName,
+        CancellationToken cancellationToken)
+    {
+        var backupPath = GetBackupPath(serverName);
+        if (!Directory.Exists(backupPath))
+        {
+            return Array.Empty<IncrementEntryDto>();
+        }
+
+        // Use rdiff-backup v2 syntax to list increments
+        var psi = new ProcessStartInfo
+        {
+            FileName = "rdiff-backup",
+            Arguments = $"list increments \"{backupPath}\"",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null)
+        {
+            throw new InvalidOperationException("Failed to start rdiff-backup process");
+        }
+
+        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorOutput = await process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+
+        if (process.ExitCode != 0)
+        {
+            _logger.LogWarning("rdiff-backup list failed with exit code {ExitCode}: {Error}", process.ExitCode, errorOutput);
+            return Array.Empty<IncrementEntryDto>();
+        }
+
+        _logger.LogInformation("rdiff-backup list output for {ServerName}: {Output}", serverName, output);
+        var increments = ParseIncrementsV2(output).ToList();
+        _logger.LogInformation("Parsed {Count} increments for {ServerName}", increments.Count, serverName);
+        return increments;
     }
 }

@@ -8,6 +8,19 @@
 	let loading = $state(false);
 	let actionLoading = $state<Record<string, boolean>>({});
 	let backups = $state<any[]>([]);
+	let jobStatus = $state<JobProgress | null>(null);
+	let jobError = $state<string | null>(null);
+	let jobEventSource: EventSource | null = null;
+
+	type JobProgress = {
+		jobId: string;
+		type: string;
+		serverName: string;
+		status: string;
+		percentage: number;
+		message: string | null;
+		timestamp: string;
+	};
 
 	$effect(() => {
 		loadBackups();
@@ -31,7 +44,10 @@
 		try {
 			const res = await fetch(`/api/servers/${data.server.name}/backups`, { method: 'POST' });
 			if (res.ok) {
-				await loadBackups();
+				const payload = await res.json().catch(() => null);
+				if (payload?.jobId) {
+					startJobStream(payload.jobId);
+				}
 			} else {
 				const errorData = await res.json().catch(() => ({}));
 				alert(`Failed to create backup: ${errorData.error || res.statusText}`);
@@ -96,6 +112,48 @@
 		}
 	}
 
+	function startJobStream(jobId: string) {
+		jobError = null;
+		jobStatus = {
+			jobId,
+			type: 'backup',
+			serverName: data.server?.name ?? '',
+			status: 'queued',
+			percentage: 0,
+			message: 'Queued',
+			timestamp: new Date().toISOString()
+		};
+
+		if (jobEventSource) {
+			jobEventSource.close();
+		}
+
+		jobEventSource = new EventSource(`/api/jobs/${jobId}/stream`);
+		jobEventSource.onmessage = (event) => {
+			try {
+				jobStatus = JSON.parse(event.data) as JobProgress;
+				if (jobStatus.status === 'completed' || jobStatus.status === 'failed') {
+					jobEventSource?.close();
+					jobEventSource = null;
+					loadBackups();
+				}
+			} catch {
+				jobError = 'Failed to parse job status';
+			}
+		};
+		jobEventSource.onerror = () => {
+			jobError = 'Job stream error';
+			jobEventSource?.close();
+			jobEventSource = null;
+		};
+	}
+
+	$effect(() => {
+		return () => {
+			jobEventSource?.close();
+		};
+	});
+
 	const formatDate = (dateStr: string) => {
 		const date = new Date(dateStr);
 		return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
@@ -124,6 +182,25 @@
 			</button>
 		</div>
 	</div>
+
+	{#if jobStatus}
+		<div class="job-card">
+			<div class="job-header">
+				<h3>Backup Job</h3>
+				<span class="job-status">{jobStatus.status}</span>
+			</div>
+			<div class="job-details">
+				<div class="job-progress">
+					<div class="job-progress-bar" style={`width: ${jobStatus.percentage}%`}></div>
+				</div>
+				<p class="job-message">{jobStatus.message ?? 'Working...'}</p>
+				<p class="job-meta">Job ID: {jobStatus.jobId}</p>
+				{#if jobError}
+					<p class="job-error">{jobError}</p>
+				{/if}
+			</div>
+		</div>
+	{/if}
 
 	{#if backups.length === 0}
 		<div class="empty-state">
@@ -273,6 +350,70 @@
 		overflow-x: auto;
 	}
 
+	.job-card {
+		background: #161b2c;
+		border-radius: 16px;
+		padding: 18px 20px;
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+		border: 1px solid #2a2f47;
+	}
+
+	.job-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 12px;
+	}
+
+	.job-header h3 {
+		margin: 0;
+		font-size: 16px;
+	}
+
+	.job-status {
+		font-size: 12px;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #98a2c9;
+	}
+
+	.job-details {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.job-progress {
+		height: 8px;
+		background: #252a3d;
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.job-progress-bar {
+		height: 100%;
+		background: linear-gradient(90deg, #5865f2, #45c6f7);
+		transition: width 0.2s ease;
+	}
+
+	.job-message {
+		margin: 0;
+		color: #d4d9f1;
+		font-size: 14px;
+	}
+
+	.job-meta {
+		margin: 0;
+		color: #8e96bb;
+		font-size: 12px;
+	}
+
+	.job-error {
+		margin: 0;
+		color: #ff9f9f;
+		font-size: 12px;
+	}
+
 	table {
 		width: 100%;
 		border-collapse: collapse;
@@ -332,6 +473,7 @@
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
+
 
 	@media (max-width: 640px) {
 		.page-header {

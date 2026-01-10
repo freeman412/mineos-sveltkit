@@ -11,6 +11,7 @@ public sealed class AppDbContext : DbContext
 
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<JobRecord> Jobs => Set<JobRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,6 +30,16 @@ public sealed class AppDbContext : DbContext
             entity.HasIndex(x => x.Username).IsUnique();
             entity.Property(x => x.Username).HasMaxLength(128);
             entity.Property(x => x.PasswordHash).IsRequired();
+        });
+
+        modelBuilder.Entity<JobRecord>(entity =>
+        {
+            entity.ToTable("Jobs");
+            entity.HasKey(x => x.JobId);
+            entity.Property(x => x.JobId).HasMaxLength(64);
+            entity.Property(x => x.Type).HasMaxLength(64);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Status).HasMaxLength(32);
         });
     }
 }

@@ -7,4 +7,5 @@ public sealed class HostOptions
     public string ServersPathSegment { get; set; } = "servers";
     public string ProfilesPathSegment { get; set; } = "profiles";
     public string ImportPathSegment { get; set; } = "import";
+    public string BackupsPathSegment { get; set; } = "backups";
 }
