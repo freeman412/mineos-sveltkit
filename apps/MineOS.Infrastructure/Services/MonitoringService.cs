@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using MineOS.Application.Dtos;
 using MineOS.Application.Interfaces;
 using MineOS.Application.Options;
+using MineOS.Infrastructure.Protocols;
 
 namespace MineOS.Infrastructure.Services;
 
@@ -66,10 +67,15 @@ public sealed partial class MonitoringService : IMonitoringService
                 port = 25565; // Default Minecraft port
             }
 
-            // Use mcstatus (if available) or implement basic ping protocol
-            // For now, return null to indicate offline/unavailable
-            // TODO: Implement Minecraft ping protocol
-            return null;
+            var host = "127.0.0.1";
+            if (properties.TryGetValue("server-ip", out var ip) &&
+                !string.IsNullOrWhiteSpace(ip) &&
+                !ip.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase))
+            {
+                host = ip;
+            }
+
+            return await MinecraftPingClient.PingAsync(host, port, cancellationToken);
         }
         catch (Exception ex)
         {

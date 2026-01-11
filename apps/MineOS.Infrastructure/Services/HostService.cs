@@ -13,15 +13,18 @@ public sealed class HostService : IHostService
     private readonly HostOptions _options;
     private readonly ILogger<HostService> _logger;
     private readonly IProcessManager _processManager;
+    private readonly IMonitoringService _monitoringService;
 
     public HostService(
         IOptions<HostOptions> options,
         ILogger<HostService> logger,
-        IProcessManager processManager)
+        IProcessManager processManager,
+        IMonitoringService monitoringService)
     {
         _options = options.Value;
         _logger = logger;
         _processManager = processManager;
+        _monitoringService = monitoringService;
     }
 
     public Task<HostMetricsDto> GetMetricsAsync(CancellationToken cancellationToken)
@@ -51,7 +54,7 @@ public sealed class HostService : IHostService
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            yield return await GetMetricsAsync(cancellationToken);  
+            yield return await GetMetricsAsync(cancellationToken);
             try
             {
                 await Task.Delay(interval, cancellationToken);
@@ -63,12 +66,12 @@ public sealed class HostService : IHostService
         }
     }
 
-    public Task<IReadOnlyList<ServerSummaryDto>> GetServersAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ServerSummaryDto>> GetServersAsync(CancellationToken cancellationToken)
     {
         var serversPath = Path.Combine(_options.BaseDirectory, _options.ServersPathSegment);
         if (!Directory.Exists(serversPath))
         {
-            return Task.FromResult<IReadOnlyList<ServerSummaryDto>>(Array.Empty<ServerSummaryDto>());
+            return Array.Empty<ServerSummaryDto>();
         }
 
         var results = new List<ServerSummaryDto>();
@@ -86,17 +89,20 @@ public sealed class HostService : IHostService
                 : (int?)null;
             var processInfo = _processManager.GetServerProcess(name);
             var up = processInfo?.JavaPid != null || processInfo?.ScreenPid != null;
+            var ping = up ? await _monitoringService.GetPingInfoAsync(name, cancellationToken) : null;
+            var playersOnline = ping?.PlayersOnline;
+            var playersMax = ping?.PlayersMax ?? maxPlayers;
 
             results.Add(new ServerSummaryDto(
                 Name: name,
                 Up: up,
                 Profile: null,
                 Port: port,
-                PlayersOnline: null,
-                PlayersMax: maxPlayers));
+                PlayersOnline: playersOnline,
+                PlayersMax: playersMax));
         }
 
-        return Task.FromResult<IReadOnlyList<ServerSummaryDto>>(results);
+        return results;
     }
 
     public Task<IReadOnlyList<ProfileDto>> GetProfilesAsync(CancellationToken cancellationToken)

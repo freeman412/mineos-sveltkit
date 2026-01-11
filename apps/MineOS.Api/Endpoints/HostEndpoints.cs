@@ -59,6 +59,45 @@ public static class HostEndpoints
         host.MapGet("/servers", async (IHostService hostService, CancellationToken cancellationToken) =>
             Results.Ok(await hostService.GetServersAsync(cancellationToken)));
 
+        host.MapGet("/servers/stream",
+            async (HttpContext context,
+                IHostService hostService,
+                IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
+                CancellationToken cancellationToken) =>
+            {
+                context.Response.ContentType = "text/event-stream";
+                context.Response.Headers["Cache-Control"] = "no-cache";
+                context.Response.Headers["Connection"] = "keep-alive";
+                context.Response.Headers["X-Accel-Buffering"] = "no";
+                context.Response.Headers.Remove("Content-Length");
+
+                await context.Response.StartAsync(cancellationToken);
+
+                var intervalMs = 2000;
+                if (int.TryParse(context.Request.Query["intervalMs"], out var parsed) && parsed > 100)
+                {
+                    intervalMs = parsed;
+                }
+
+                var interval = TimeSpan.FromMilliseconds(intervalMs);
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var servers = await hostService.GetServersAsync(cancellationToken);
+                    var payload = JsonSerializer.Serialize(servers, jsonOptions.Value.SerializerOptions);
+                    await context.Response.WriteAsync($"data: {payload}\n\n", cancellationToken);
+                    await context.Response.Body.FlushAsync(cancellationToken);
+
+                    try
+                    {
+                        await Task.Delay(interval, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
+            });
+
         host.MapGet("/profiles", async (IProfileService profileService, CancellationToken cancellationToken) =>
             Results.Ok(await profileService.ListProfilesAsync(cancellationToken)));
 
