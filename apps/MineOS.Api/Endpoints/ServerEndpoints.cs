@@ -170,6 +170,46 @@ public static class ServerEndpoints
             return Results.Ok(new { message = "Config updated" });
         });
 
+        servers.MapPost("/{name}/eula", async (
+            string name,
+            IServerService serverService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await serverService.AcceptEulaAsync(name, cancellationToken);
+                return Results.Ok(new { message = $"EULA accepted for '{name}'" });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
+
+        servers.MapPost("/{name}/ftb-install", async (
+            string name,
+            IServerService serverService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await serverService.RunFtbInstallerAsync(name, cancellationToken);
+                return Results.Ok(new { message = $"FTB installer completed for '{name}'" });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
+
         // Phase 2: Backup and archive endpoints
         servers.MapBackupEndpoints();
         servers.MapArchiveEndpoints();
