@@ -1,4 +1,4 @@
-import type { ApiResult, HostMetrics, ServerSummary } from './types';
+import type { ApiResult, HostMetrics, ServerSummary, Profile, ArchiveEntry } from './types';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -25,6 +25,18 @@ export function getHostMetrics(fetcher: Fetcher) {
 export function getHostServers(fetcher: Fetcher) {
 	return apiFetch<ServerSummary[]>(fetcher, '/api/host/servers');
 }
+
+export function getHostProfiles(fetcher: Fetcher) {
+	return apiFetch<Profile[]>(fetcher, '/api/host/profiles');
+}
+
+export function getHostImports(fetcher: Fetcher) {
+	return apiFetch<ArchiveEntry[]>(fetcher, '/api/host/imports');
+}
+
+// Aliases for consistency
+export const listServers = getHostServers;
+export const listProfiles = getHostProfiles;
 
 // Server management operations
 export async function getServer(
