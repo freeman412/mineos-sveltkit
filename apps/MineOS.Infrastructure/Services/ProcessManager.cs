@@ -219,7 +219,7 @@ public partial class ProcessManager : IProcessManager
 
     private ProcessStartInfo BuildProcessStartInfo(string command, string[] args, int uid, int gid)
     {
-        var useSudo = ShouldUseSudo(uid, gid);
+        var useSu = ShouldUseSu(uid, gid);
         var startInfo = new ProcessStartInfo
         {
             UseShellExecute = false,
@@ -227,39 +227,33 @@ public partial class ProcessManager : IProcessManager
             RedirectStandardError = true
         };
 
-        if (useSudo)
+        if (useSu)
         {
-            // Use sudo -u minecraft instead of setpriv for better environment setup
-            // This is needed for screen to work properly with the minecraft user
-            var sudoPath = ResolveSudoPath();
-            if (sudoPath == null)
-            {
-                _logger.LogWarning("sudo not found; running {Command} as current user instead of uid={Uid} gid={Gid}", command, uid, gid);
-                useSudo = false;
-            }
-            else
-            {
-                startInfo.FileName = sudoPath;
-                startInfo.ArgumentList.Add("-u");
-                startInfo.ArgumentList.Add("minecraft");  // Use username instead of UID for better compatibility
-                startInfo.ArgumentList.Add(command);
-            }
-        }
+            // Use su to run command as unprivileged minecraft user
+            // su provides proper environment initialization for screen sessions
+            startInfo.FileName = "/bin/su";
+            startInfo.ArgumentList.Add("-");  // Login shell
+            startInfo.ArgumentList.Add("minecraft");  // Username
+            startInfo.ArgumentList.Add("-c");  // Execute command
 
-        if (!useSudo)
+            // Build the full command string with arguments
+            var escapedArgs = args.Select(a => $"'{a.Replace("'", "'\\''")}'");
+            var fullCommand = command + " " + string.Join(" ", escapedArgs);
+            startInfo.ArgumentList.Add(fullCommand);
+        }
+        else
         {
             startInfo.FileName = command;
-        }
-
-        foreach (var arg in args)
-        {
-            startInfo.ArgumentList.Add(arg);
+            foreach (var arg in args)
+            {
+                startInfo.ArgumentList.Add(arg);
+            }
         }
 
         return startInfo;
     }
 
-    private static bool ShouldUseSudo(int uid, int gid)
+    private static bool ShouldUseSu(int uid, int gid)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -306,25 +300,6 @@ public partial class ProcessManager : IProcessManager
         {
             "/usr/bin/setpriv",
             "/bin/setpriv"
-        };
-
-        foreach (var candidate in candidates)
-        {
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static string? ResolveSudoPath()
-    {
-        var candidates = new[]
-        {
-            "/usr/bin/sudo",
-            "/bin/sudo"
         };
 
         foreach (var candidate in candidates)
