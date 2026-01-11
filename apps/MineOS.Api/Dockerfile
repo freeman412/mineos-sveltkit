@@ -34,12 +34,15 @@ RUN apt-get update && apt-get install -y \
     util-linux \
     procps \
     rsync \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Create minecraft user with UID 1000 and GID 1000
 # This matches the default Host__OwnerUid and Host__OwnerGid settings
 RUN groupadd -g 1000 minecraft && \
-    useradd -u 1000 -g 1000 -m -s /bin/bash minecraft
+    useradd -u 1000 -g 1000 -m -s /bin/bash minecraft && \
+    echo "root ALL=(minecraft) NOPASSWD: ALL" > /etc/sudoers.d/minecraft && \
+    chmod 0440 /etc/sudoers.d/minecraft
 
 # Create app user for running the API (root is needed for setpriv)
 WORKDIR /app

@@ -219,7 +219,7 @@ public partial class ProcessManager : IProcessManager
 
     private ProcessStartInfo BuildProcessStartInfo(string command, string[] args, int uid, int gid)
     {
-        var useSetpriv = ShouldUseSetpriv(uid, gid);
+        var useSudo = ShouldUseSudo(uid, gid);
         var startInfo = new ProcessStartInfo
         {
             UseShellExecute = false,
@@ -227,28 +227,26 @@ public partial class ProcessManager : IProcessManager
             RedirectStandardError = true
         };
 
-        if (useSetpriv)
+        if (useSudo)
         {
-            var setprivPath = ResolveSetprivPath();
-            if (setprivPath == null)
+            // Use sudo -u minecraft instead of setpriv for better environment setup
+            // This is needed for screen to work properly with the minecraft user
+            var sudoPath = ResolveSudoPath();
+            if (sudoPath == null)
             {
-                _logger.LogWarning("setpriv not found; running {Command} as current user instead of uid={Uid} gid={Gid}", command, uid, gid);
-                useSetpriv = false;
+                _logger.LogWarning("sudo not found; running {Command} as current user instead of uid={Uid} gid={Gid}", command, uid, gid);
+                useSudo = false;
             }
             else
             {
-                startInfo.FileName = setprivPath;
-                startInfo.ArgumentList.Add("--reuid");
-                startInfo.ArgumentList.Add(uid.ToString());
-                startInfo.ArgumentList.Add("--regid");
-                startInfo.ArgumentList.Add(gid.ToString());
-                startInfo.ArgumentList.Add("--clear-groups");
-                startInfo.ArgumentList.Add("--");
+                startInfo.FileName = sudoPath;
+                startInfo.ArgumentList.Add("-u");
+                startInfo.ArgumentList.Add("minecraft");  // Use username instead of UID for better compatibility
                 startInfo.ArgumentList.Add(command);
             }
         }
 
-        if (!useSetpriv)
+        if (!useSudo)
         {
             startInfo.FileName = command;
         }
@@ -261,7 +259,7 @@ public partial class ProcessManager : IProcessManager
         return startInfo;
     }
 
-    private static bool ShouldUseSetpriv(int uid, int gid)
+    private static bool ShouldUseSudo(int uid, int gid)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -308,6 +306,25 @@ public partial class ProcessManager : IProcessManager
         {
             "/usr/bin/setpriv",
             "/bin/setpriv"
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolveSudoPath()
+    {
+        var candidates = new[]
+        {
+            "/usr/bin/sudo",
+            "/bin/sudo"
         };
 
         foreach (var candidate in candidates)
