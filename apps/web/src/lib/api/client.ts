@@ -1,4 +1,12 @@
-import type { ApiResult, HostMetrics, ServerSummary, Profile, ArchiveEntry } from './types';
+import type {
+	ApiResult,
+	HostMetrics,
+	ServerSummary,
+	Profile,
+	ArchiveEntry,
+	CurseForgeSearchResult,
+	CurseForgeMod
+} from './types';
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -32,6 +40,18 @@ export function getHostProfiles(fetcher: Fetcher) {
 
 export function getHostImports(fetcher: Fetcher) {
 	return apiFetch<ArchiveEntry[]>(fetcher, '/api/host/imports');
+}
+
+export function searchCurseForge(fetcher: Fetcher, query: string, classId?: number) {
+	const params = new URLSearchParams({ query });
+	if (classId) {
+		params.set('classId', String(classId));
+	}
+	return apiFetch<CurseForgeSearchResult>(fetcher, `/api/curseforge/search?${params.toString()}`);
+}
+
+export function getCurseForgeMod(fetcher: Fetcher, id: number) {
+	return apiFetch<CurseForgeMod>(fetcher, `/api/curseforge/mod/${id}`);
 }
 
 // Aliases for consistency

@@ -103,3 +103,55 @@ export type CreateServerRequest = {
 	ownerUid: number;
 	ownerGid: number;
 };
+
+export type InstalledMod = {
+	fileName: string;
+	sizeBytes: number;
+	modifiedAt: string;
+	isDisabled: boolean;
+};
+
+export type CurseForgeCategory = {
+	id: number;
+	name: string;
+	url: string | null;
+	iconUrl: string | null;
+};
+
+export type CurseForgeFile = {
+	id: number;
+	fileName: string;
+	fileLength: number;
+	fileDate: string;
+	downloadUrl: string | null;
+	gameVersions: string[];
+	releaseType: number | null;
+};
+
+export type CurseForgeModSummary = {
+	id: number;
+	name: string;
+	summary: string;
+	downloadCount: number;
+	logoUrl: string | null;
+	latestFileId: number | null;
+	categories: CurseForgeCategory[];
+};
+
+export type CurseForgeMod = {
+	id: number;
+	name: string;
+	summary: string;
+	downloadCount: number;
+	logoUrl: string | null;
+	categories: CurseForgeCategory[];
+	latestFiles: CurseForgeFile[];
+};
+
+export type CurseForgeSearchResult = {
+	index: number;
+	pageSize: number;
+	resultCount: number;
+	totalCount: number;
+	results: CurseForgeModSummary[];
+};

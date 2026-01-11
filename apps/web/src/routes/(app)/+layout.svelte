@@ -16,7 +16,8 @@
 		{ href: '/dashboard', label: 'Dashboard', icon: '📊' },
 		{ href: '/servers', label: 'Servers', icon: '🖥️' },
 		{ href: '/profiles', label: 'Profiles', icon: '📦' },
-		{ href: '/import', label: 'Import', icon: '📥' }
+		{ href: '/import', label: 'Import', icon: '📥' },
+		{ href: '/curseforge', label: 'CurseForge', icon: '🧩' }
 	];
 
 	function isActive(href: string) {
