@@ -13,6 +13,7 @@
 	}
 
 	const navItems = [
+		{ href: '/dashboard', label: 'Dashboard', icon: '📊' },
 		{ href: '/servers', label: 'Servers', icon: '🖥️' },
 		{ href: '/profiles', label: 'Profiles', icon: '📦' },
 		{ href: '/import', label: 'Import', icon: '📥' }
@@ -25,7 +26,7 @@
 
 <svelte:head>
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link
 		href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
 		rel="stylesheet"
