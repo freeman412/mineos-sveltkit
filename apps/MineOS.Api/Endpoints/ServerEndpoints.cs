@@ -221,6 +221,9 @@ public static class ServerEndpoints
         // Phase 4: File management endpoints
         servers.MapFileEndpoints();
 
+        // Phase 6: Mod management endpoints
+        servers.MapModEndpoints();
+
         var cron = api.MapGroup("/servers/{name}/cron");
         cron.MapGet("/", (string name) => Results.Ok(Array.Empty<CronJobDto>()));
         cron.MapPost("/", (string name, CreateCronRequest _) =>

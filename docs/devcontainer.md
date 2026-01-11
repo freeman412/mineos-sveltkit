@@ -54,6 +54,10 @@ The web container is configured to call the API with:
 These are set in `.devcontainer/docker-compose.yml`. The API key must match
 `ApiKey:StaticKey` in `apps/MineOS.Api/appsettings.Development.json`.
 
+For CurseForge integration, set `CurseForge:ApiKey` in
+`apps/MineOS.Api/appsettings.Development.json` (the API key is required to
+query CurseForge and install mods/modpacks).
+
 ## Dependencies
 
 The API container includes the following Minecraft server management dependencies:

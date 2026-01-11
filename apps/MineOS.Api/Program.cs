@@ -10,8 +10,10 @@ using MineOS.Application.Interfaces;
 using HostOptions = MineOS.Application.Options.HostOptions;
 using ApiKeyOptions = MineOS.Application.Options.ApiKeyOptions;
 using JwtOptions = MineOS.Application.Options.JwtOptions;
+using CurseForgeOptions = MineOS.Application.Options.CurseForgeOptions;
 using MineOS.Infrastructure.Persistence;
 using MineOS.Infrastructure.Services;
+using MineOS.Infrastructure.External;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -79,6 +81,7 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.Configure<HostOptions>(builder.Configuration.GetSection("Host"));
 builder.Services.Configure<ApiKeyOptions>(builder.Configuration.GetSection("ApiKey"));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Auth:Jwt"));
+builder.Services.Configure<CurseForgeOptions>(builder.Configuration.GetSection("CurseForge"));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -118,6 +121,7 @@ builder.Services.AddScoped<IMonitoringService, MonitoringService>();
 builder.Services.AddScoped<IFileService, FileService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IImportService, ImportService>();
+builder.Services.AddScoped<ICurseForgeService, CurseForgeService>();
 builder.Services.AddSingleton<IProcessManager, ProcessManager>();
 builder.Services.AddSingleton<IPasswordHasher, Argon2PasswordHasher>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
@@ -125,6 +129,8 @@ builder.Services.AddSingleton<BackgroundJobService>();
 builder.Services.AddSingleton<IBackgroundJobService>(sp => sp.GetRequiredService<BackgroundJobService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BackgroundJobService>());
 builder.Services.AddHttpClient<IProfileService, ProfileService>();
+builder.Services.AddHttpClient<IModService, ModService>();
+builder.Services.AddHttpClient<CurseForgeClient>();
 builder.Services.AddScoped<ApiKeySeeder>();
 builder.Services.AddScoped<UserSeeder>();
 
