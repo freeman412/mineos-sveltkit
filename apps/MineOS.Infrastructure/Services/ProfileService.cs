@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -15,6 +16,7 @@ public sealed class ProfileService : IProfileService
     private const string BuildToolsJarName = "BuildTools.jar";
     private const string BuildToolsUrl =
         "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar";
+    private const string RestartFlagFile = ".mineos-restart-required";
     private const string PaperProjectUrl = "https://api.papermc.io/v2/projects/paper";
     private const string MojangVersionManifestUrl = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
     private const int PaperVersionLimit = 20;
@@ -26,6 +28,7 @@ public sealed class ProfileService : IProfileService
     private static readonly SemaphoreSlim VanillaCacheLock = new(1, 1);
     private static DateTimeOffset? _vanillaLastFetch;
     private static List<ProfileDto> _vanillaCache = new();
+    private static readonly ConcurrentDictionary<string, BuildToolsRunState> BuildToolsRuns = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -52,6 +55,12 @@ public sealed class ProfileService : IProfileService
 
     private string GetProfilesFilePath() =>
         Path.Combine(GetProfilesPath(), "profiles.json");
+
+    private string GetBuildToolsLogsPath() =>
+        Path.Combine(_hostOptions.BaseDirectory, "logs", "buildtools");
+
+    private string GetBuildToolsLogPath(string runId) =>
+        Path.Combine(GetBuildToolsLogsPath(), $"{runId}.log");
 
     private string GetProfilePath(string id) =>
         Path.Combine(GetProfilesPath(), id);
@@ -168,6 +177,7 @@ public sealed class ProfileService : IProfileService
 
         File.Copy(profileJarPath, targetJarPath, overwrite: true);
         await UpdateServerConfigJarAsync(serverPath, jarFilename, cancellationToken);
+        MarkRestartRequired(serverPath);
 
         _logger.LogInformation("Copied profile {ProfileId} to server {ServerName}", profileId, serverName);
     }
@@ -221,7 +231,130 @@ public sealed class ProfileService : IProfileService
         _logger.LogInformation("Downloaded profile {ProfileId} to {JarPath}", id, jarPath);
     }
 
-    public async Task<ProfileDto> BuildToolsAsync(string group, string version, CancellationToken cancellationToken)
+    public async Task<BuildToolsRunDto> StartBuildToolsAsync(string group, string version, CancellationToken cancellationToken)
+    {
+        var request = NormalizeBuildToolsRequest(group, version);
+        var runId = Guid.NewGuid().ToString("N");
+        var logPath = GetBuildToolsLogPath(runId);
+        var startedAt = DateTimeOffset.UtcNow;
+
+        Directory.CreateDirectory(GetBuildToolsLogsPath());
+        await File.WriteAllTextAsync(
+            logPath,
+            $"[{startedAt:O}] BuildTools run started for {request.Group} {request.Version}{Environment.NewLine}",
+            cancellationToken);
+
+        var run = new BuildToolsRunState(runId, request.ProfileId, request.Group, request.Version, logPath, startedAt);
+        BuildToolsRuns[runId] = run;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await BuildToolsInternalAsync(request, run, CancellationToken.None);
+                run.MarkCompleted();
+                await AppendLogLineAsync(logPath, "BuildTools completed successfully.");
+            }
+            catch (Exception ex)
+            {
+                run.MarkFailed(ex.Message);
+                await AppendLogLineAsync(logPath, $"BuildTools failed: {ex.Message}");
+                _logger.LogError(ex, "BuildTools run {RunId} failed", runId);
+            }
+        }, CancellationToken.None);
+
+        return run.ToDto();
+    }
+
+    public Task<BuildToolsRunDto?> GetBuildToolsRunAsync(string runId, CancellationToken cancellationToken)
+    {
+        if (BuildToolsRuns.TryGetValue(runId, out var run))
+        {
+            return Task.FromResult<BuildToolsRunDto?>(run.ToDto());
+        }
+
+        return Task.FromResult<BuildToolsRunDto?>(null);
+    }
+
+    public Task<IReadOnlyList<BuildToolsRunDto>> ListBuildToolsRunsAsync(CancellationToken cancellationToken)
+    {
+        var runs = BuildToolsRuns.Values
+            .Select(run => run.ToDto())
+            .OrderByDescending(run => run.StartedAt)
+            .ToList();
+        return Task.FromResult<IReadOnlyList<BuildToolsRunDto>>(runs);
+    }
+
+    public async IAsyncEnumerable<BuildToolsLogEntryDto> StreamBuildToolsLogAsync(
+        string runId,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (!BuildToolsRuns.TryGetValue(runId, out var run))
+        {
+            throw new ArgumentException($"BuildTools run '{runId}' not found");
+        }
+
+        var logPath = run.LogPath;
+        while (!File.Exists(logPath) && !cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(200, cancellationToken);
+        }
+
+        await using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                yield break;
+            }
+
+            if (line != null)
+            {
+                var status = run.ToDto().Status;
+                yield return new BuildToolsLogEntryDto(DateTimeOffset.UtcNow, line, status);
+                continue;
+            }
+
+            var snapshot = run.ToDto();
+            if (snapshot.Status is "completed" or "failed")
+            {
+                try
+                {
+                    await Task.Delay(200, cancellationToken);
+                    line = await reader.ReadLineAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    yield break;
+                }
+
+                if (line != null)
+                {
+                    yield return new BuildToolsLogEntryDto(DateTimeOffset.UtcNow, line, snapshot.Status);
+                }
+
+                yield break;
+            }
+
+            try
+            {
+                await Task.Delay(250, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                yield break;
+            }
+        }
+    }
+
+    private BuildToolsRequest NormalizeBuildToolsRequest(string group, string version)
     {
         if (string.IsNullOrWhiteSpace(group))
         {
@@ -245,20 +378,54 @@ public sealed class ProfileService : IProfileService
         };
 
         var profileId = $"{normalizedGroup}-{normalizedVersion}";
+        return new BuildToolsRequest(normalizedGroup, normalizedVersion, compileArg, profileId);
+    }
+
+    private async Task BuildToolsInternalAsync(
+        BuildToolsRequest request,
+        BuildToolsRunState run,
+        CancellationToken cancellationToken)
+    {
+        var profileId = request.ProfileId;
         var profilePath = GetProfilePath(profileId);
         Directory.CreateDirectory(profilePath);
+
+        await using var logStream = new FileStream(run.LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        await using var logWriter = new StreamWriter(logStream) { AutoFlush = true };
+        var logLock = new SemaphoreSlim(1, 1);
+
+        async Task WriteLogAsync(string message)
+        {
+            await logLock.WaitAsync(cancellationToken);
+            try
+            {
+                await logWriter.WriteLineAsync($"[{DateTimeOffset.UtcNow:O}] {message}");
+            }
+            finally
+            {
+                logLock.Release();
+            }
+        }
 
         var buildToolsPath = Path.Combine(profilePath, BuildToolsJarName);
         if (!File.Exists(buildToolsPath))
         {
-            using var response = await _httpClient.GetAsync(BuildToolsUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            await WriteLogAsync("Downloading BuildTools.jar");
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Get, BuildToolsUrl);
+            requestMessage.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) MineOS/1.0");
+            requestMessage.Headers.Accept.ParseAdd("application/java-archive");
+            requestMessage.Headers.Accept.ParseAdd("application/octet-stream");
+            requestMessage.Headers.Referrer = new Uri("https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/");
+
+            using var response = await _httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             await using var fileStream = new FileStream(buildToolsPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await response.Content.CopyToAsync(fileStream, cancellationToken);
         }
 
-        var args = $"-jar {BuildToolsJarName} --rev {normalizedVersion} --compile {compileArg}";
+        var args = $"-jar {BuildToolsJarName} --rev {request.Version} --compile {request.CompileArg}";
+        await WriteLogAsync($"Running: java {args}");
 
         var psi = new ProcessStartInfo
         {
@@ -277,26 +444,43 @@ public sealed class ProfileService : IProfileService
             throw new InvalidOperationException("Failed to start BuildTools process");
         }
 
+        Task ReadStreamAsync(StreamReader reader, string prefix)
+        {
+            return Task.Run(async () =>
+            {
+                string? line;
+                while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
+                {
+                    await WriteLogAsync($"{prefix}{line}");
+                }
+            }, cancellationToken);
+        }
+
+        var stdoutTask = ReadStreamAsync(process.StandardOutput, string.Empty);
+        var stderrTask = ReadStreamAsync(process.StandardError, "ERR ");
+
         await process.WaitForExitAsync(cancellationToken);
+        await Task.WhenAll(stdoutTask, stderrTask);
+
+        await WriteLogAsync($"BuildTools exited with code {process.ExitCode}");
 
         if (process.ExitCode != 0)
         {
-            var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-            throw new InvalidOperationException($"BuildTools failed: {error}");
+            throw new InvalidOperationException("BuildTools failed. Check the log output for details.");
         }
 
-        var sourceJarName = normalizedGroup == "spigot"
-            ? $"spigot-{normalizedVersion}.jar"
-            : $"craftbukkit-{normalizedVersion}.jar";
+        var sourceJarName = request.Group == "spigot"
+            ? $"spigot-{request.Version}.jar"
+            : $"craftbukkit-{request.Version}.jar";
         var sourceJarPath = Path.Combine(profilePath, sourceJarName);
 
         if (!File.Exists(sourceJarPath))
         {
-            var candidate = Directory.GetFiles(profilePath, $"*{normalizedVersion}*.jar")
+            var candidate = Directory.GetFiles(profilePath, $"*{request.Version}*.jar")
                 .FirstOrDefault(path => !path.EndsWith(BuildToolsJarName, StringComparison.OrdinalIgnoreCase));
             if (candidate == null)
             {
-                throw new FileNotFoundException($"BuildTools output not found for {normalizedGroup} {normalizedVersion}");
+                throw new FileNotFoundException($"BuildTools output not found for {request.Group} {request.Version}");
             }
 
             sourceJarPath = candidate;
@@ -308,9 +492,9 @@ public sealed class ProfileService : IProfileService
 
         var profile = new ProfileDto(
             profileId,
-            normalizedGroup,
+            request.Group,
             "buildtools",
-            normalizedVersion,
+            request.Version,
             DateTimeOffset.UtcNow.ToString("O"),
             BuildToolsUrl,
             targetJarName,
@@ -331,8 +515,6 @@ public sealed class ProfileService : IProfileService
         await SaveProfilesAsync(profiles, cancellationToken);
 
         _logger.LogInformation("Built BuildTools profile {ProfileId}", profileId);
-
-        return profile;
     }
 
     public async Task DeleteBuildToolsAsync(string id, CancellationToken cancellationToken)
@@ -719,6 +901,13 @@ public sealed class ProfileService : IProfileService
         await File.WriteAllTextAsync(GetProfilesFilePath(), json, cancellationToken);
     }
 
+    private static async Task AppendLogLineAsync(string logPath, string message)
+    {
+        await using var stream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        await using var writer = new StreamWriter(stream) { AutoFlush = true };
+        await writer.WriteLineAsync($"[{DateTimeOffset.UtcNow:O}] {message}");
+    }
+
     private static IEnumerable<ProfileDto> GetDefaultProfiles()
     {
         var now = DateTimeOffset.UtcNow.ToString("O");
@@ -760,6 +949,88 @@ public sealed class ProfileService : IProfileService
         };
     }
 
+    private sealed record BuildToolsRequest(string Group, string Version, string CompileArg, string ProfileId);
+
+    private sealed class BuildToolsRunState
+    {
+        private readonly object _sync = new();
+
+        public BuildToolsRunState(
+            string runId,
+            string profileId,
+            string group,
+            string version,
+            string logPath,
+            DateTimeOffset startedAt)
+        {
+            RunId = runId;
+            ProfileId = profileId;
+            Group = group;
+            Version = version;
+            LogPath = logPath;
+            StartedAt = startedAt;
+            Status = "running";
+        }
+
+        public string RunId { get; }
+        public string ProfileId { get; }
+        public string Group { get; }
+        public string Version { get; }
+        public string LogPath { get; }
+        public DateTimeOffset StartedAt { get; }
+        public DateTimeOffset? CompletedAt { get; private set; }
+        public string Status { get; private set; }
+        public string? Error { get; private set; }
+
+        public void MarkCompleted()
+        {
+            lock (_sync)
+            {
+                Status = "completed";
+                CompletedAt = DateTimeOffset.UtcNow;
+            }
+        }
+
+        public void MarkFailed(string error)
+        {
+            lock (_sync)
+            {
+                Status = "failed";
+                Error = error;
+                CompletedAt = DateTimeOffset.UtcNow;
+            }
+        }
+
+        public BuildToolsRunDto ToDto()
+        {
+            lock (_sync)
+            {
+                return new BuildToolsRunDto(
+                    RunId,
+                    ProfileId,
+                    Group,
+                    Version,
+                    Status,
+                    StartedAt,
+                    CompletedAt,
+                    Error);
+            }
+        }
+    }
+
     private record MojangVersionInfo(string Id, string Url, string ReleaseTime, DateTimeOffset? ReleaseTimeParsed);
     private record PaperBuildInfo(int Build, string Time, string FileName);
+
+    private void MarkRestartRequired(string serverPath)
+    {
+        try
+        {
+            var flagPath = Path.Combine(serverPath, RestartFlagFile);
+            File.WriteAllText(flagPath, DateTimeOffset.UtcNow.ToString("O"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to mark restart required for {ServerPath}", serverPath);
+        }
+    }
 }

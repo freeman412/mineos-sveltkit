@@ -9,9 +9,39 @@ public sealed class AppDbContext : DbContext
     {
     }
 
-    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    // Core entities
     public DbSet<User> Users => Set<User>();
     public DbSet<JobRecord> Jobs => Set<JobRecord>();
+
+    // Server management
+    public DbSet<ServerNote> ServerNotes => Set<ServerNote>();
+    public DbSet<ServerTag> ServerTags => Set<ServerTag>();
+    public DbSet<UserFavorite> UserFavorites => Set<UserFavorite>();
+    public DbSet<ServerTemplate> ServerTemplates => Set<ServerTemplate>();
+
+    // Performance & Monitoring
+    public DbSet<PerformanceMetric> PerformanceMetrics => Set<PerformanceMetric>();
+    public DbSet<Alert> Alerts => Set<Alert>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    // Player Management
+    public DbSet<Player> Players => Set<Player>();
+    public DbSet<PlayerBan> PlayerBans => Set<PlayerBan>();
+
+    // Content & Config
+    public DbSet<Plugin> Plugins => Set<Plugin>();
+    public DbSet<World> Worlds => Set<World>();
+    public DbSet<ResourcePack> ResourcePacks => Set<ResourcePack>();
+
+    // Integration & Automation
+    public DbSet<WebhookConfig> WebhookConfigs => Set<WebhookConfig>();
+    public DbSet<MigrationHistory> MigrationHistories => Set<MigrationHistory>();
+
+    // Multi-Host
+    public DbSet<Host> Hosts => Set<Host>();
+
+    // API & Security
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,6 +69,138 @@ public sealed class AppDbContext : DbContext
             entity.Property(x => x.JobId).HasMaxLength(64);
             entity.Property(x => x.Type).HasMaxLength(64);
             entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Status).HasMaxLength(32);
+        });
+
+        // Server management
+        modelBuilder.Entity<ServerNote>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ServerName);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<ServerTag>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ServerName);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Name).HasMaxLength(64);
+            entity.Property(x => x.Color).HasMaxLength(32);
+        });
+
+        modelBuilder.Entity<UserFavorite>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.UserId, x.ServerName }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<ServerTemplate>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(128);
+        });
+
+        // Performance & Monitoring
+        modelBuilder.Entity<PerformanceMetric>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.Timestamp });
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+        });
+
+        modelBuilder.Entity<Alert>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ServerName);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Type).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.Timestamp);
+            entity.Property(x => x.Action).HasMaxLength(128);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+        });
+
+        // Player Management
+        modelBuilder.Entity<Player>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.Uuid }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Uuid).HasMaxLength(36);
+            entity.Property(x => x.Name).HasMaxLength(16);
+        });
+
+        modelBuilder.Entity<PlayerBan>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.PlayerId);
+            entity.Property(x => x.BannedBy).HasMaxLength(128);
+            entity.HasOne(x => x.Player)
+                .WithMany()
+                .HasForeignKey(x => x.PlayerId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Content & Config
+        modelBuilder.Entity<Plugin>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.Name }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Name).HasMaxLength(128);
+            entity.Property(x => x.Version).HasMaxLength(32);
+        });
+
+        modelBuilder.Entity<World>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.Name }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Name).HasMaxLength(128);
+            entity.Property(x => x.Type).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<ResourcePack>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ServerName);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Name).HasMaxLength(256);
+        });
+
+        // Integration & Automation
+        modelBuilder.Entity<WebhookConfig>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ServerName);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Type).HasMaxLength(32);
+        });
+
+        modelBuilder.Entity<MigrationHistory>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ServerName);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.FromVersion).HasMaxLength(32);
+            entity.Property(x => x.ToVersion).HasMaxLength(32);
+            entity.Property(x => x.Status).HasMaxLength(32);
+        });
+
+        // Multi-Host
+        modelBuilder.Entity<Host>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.Name).IsUnique();
+            entity.Property(x => x.Name).HasMaxLength(128);
+            entity.Property(x => x.Hostname).HasMaxLength(256);
             entity.Property(x => x.Status).HasMaxLength(32);
         });
     }
