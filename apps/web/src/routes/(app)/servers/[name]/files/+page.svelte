@@ -10,18 +10,28 @@
 	let selectedFile = $state<string | null>(null);
 	let fileContent = $state('');
 	let editMode = $state(false);
+	let uploadError = $state('');
 
 	$effect(() => {
 		loadFiles();
 	});
 
+	function buildBrowseUrl(path: string) {
+		if (!data.server) return '';
+		if (path === '/' || path === '') {
+			return `/api/servers/${data.server.name}/files`;
+		}
+		return `/api/servers/${data.server.name}/files${path}`;
+	}
+
 	async function loadFiles() {
 		if (!data.server) return;
 		loading = true;
 		try {
-			const res = await fetch(`/api/servers/${data.server.name}/files?path=${encodeURIComponent(currentPath)}`);
+			const res = await fetch(buildBrowseUrl(currentPath));
 			if (res.ok) {
-				files = await res.json();
+				const result = await res.json();
+				files = result.entries ?? [];
 			} else {
 				const error = await res.json().catch(() => ({ error: 'Failed to load files' }));
 				alert(error.error || 'Failed to load files');
@@ -63,12 +73,16 @@
 		loading = true;
 		try {
 			const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-			const res = await fetch(`/api/servers/${data.server.name}/files/read?path=${encodeURIComponent(filePath)}`);
+			const res = await fetch(buildBrowseUrl(filePath));
 			if (res.ok) {
 				const result = await res.json();
-				fileContent = result.content;
-				selectedFile = name;
-				editMode = false;
+				if (result.kind === 'file' && result.file) {
+					fileContent = result.file.content ?? '';
+					selectedFile = name;
+					editMode = false;
+				} else {
+					alert('Selected path is not a file');
+				}
 			} else {
 				const error = await res.json().catch(() => ({ error: 'Failed to read file' }));
 				alert(error.error || 'Failed to read file');
@@ -83,10 +97,10 @@
 		loading = true;
 		try {
 			const filePath = currentPath === '/' ? `/${selectedFile}` : `${currentPath}/${selectedFile}`;
-			const res = await fetch(`/api/servers/${data.server.name}/files`, {
+			const res = await fetch(buildBrowseUrl(filePath), {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ path: filePath, content: fileContent })
+				body: JSON.stringify({ content: fileContent })
 			});
 			if (res.ok) {
 				alert('File saved successfully');
@@ -107,7 +121,7 @@
 		loading = true;
 		try {
 			const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-			const res = await fetch(`/api/servers/${data.server.name}/files?path=${encodeURIComponent(filePath)}`, {
+			const res = await fetch(buildBrowseUrl(filePath), {
 				method: 'DELETE'
 			});
 			if (res.ok) {
@@ -120,6 +134,37 @@
 			} else {
 				const error = await res.json().catch(() => ({ error: 'Failed to delete' }));
 				alert(error.error || 'Failed to delete');
+			}
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function uploadFile(event: Event) {
+		if (!data.server) return;
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+
+		uploadError = '';
+		loading = true;
+		try {
+			const filePath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+			const buffer = await file.arrayBuffer();
+			const res = await fetch(buildBrowseUrl(filePath), {
+				method: 'POST',
+				headers: {
+					'Content-Type': file.type || 'application/octet-stream'
+				},
+				body: buffer
+			});
+
+			if (res.ok) {
+				await loadFiles();
+				input.value = '';
+			} else {
+				const error = await res.json().catch(() => ({ error: 'Failed to upload file' }));
+				uploadError = error.error || 'Failed to upload file';
 			}
 		} finally {
 			loading = false;
@@ -147,14 +192,23 @@
 			</button>
 			<span class="path">{currentPath}</span>
 		</div>
-		<button onclick={loadFiles} disabled={loading} class="btn">
-			{loading ? 'Loading...' : 'Refresh'}
-		</button>
+		<div class="toolbar-actions">
+			<label class="btn upload-btn">
+				<input type="file" onchange={uploadFile} hidden />
+				Upload
+			</label>
+			<button onclick={loadFiles} disabled={loading} class="btn">
+				{loading ? 'Loading...' : 'Refresh'}
+			</button>
+		</div>
 	</div>
 
 	<div class="content">
 		<div class="file-list">
 			<h3>Files & Directories</h3>
+			{#if uploadError}
+				<p class="error">{uploadError}</p>
+			{/if}
 			{#if files.length === 0}
 				<p class="empty">No files or directories</p>
 			{:else}
@@ -238,6 +292,12 @@
 		padding: 1rem;
 		background: #1a1a1a;
 		border-radius: 8px;
+	}
+
+	.toolbar-actions {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
 	}
 
 	.breadcrumb {
@@ -324,6 +384,12 @@
 		padding: 2rem;
 	}
 
+	.error {
+		color: #ff9f9f;
+		font-size: 0.85rem;
+		margin-bottom: 0.5rem;
+	}
+
 	.viewer-toolbar {
 		display: flex;
 		justify-content: space-between;
@@ -407,5 +473,10 @@
 
 	.btn-danger:hover {
 		background: #e53e3e;
+	}
+
+	.upload-btn {
+		display: inline-flex;
+		align-items: center;
 	}
 </style>

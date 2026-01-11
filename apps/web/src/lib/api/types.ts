@@ -20,6 +20,24 @@ export type ServerSummary = {
 	playersMax?: number | null;
 };
 
+export type Profile = {
+	id: string;
+	group: string;
+	type: string;
+	version: string;
+	releaseTime: string;
+	url: string;
+	filename: string;
+	downloaded: boolean;
+	progress: unknown | null;
+};
+
+export type ArchiveEntry = {
+	time: string;
+	size: number;
+	filename: string;
+};
+
 export type ApiResult<T> = {
 	data: T | null;
 	error: string | null;
