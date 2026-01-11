@@ -17,6 +17,7 @@
 		'downloads-desc'
 	);
 	let minDownloads = $state('0');
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 	let pageIndex = 0;
 	let pageSize = 20;
 	let hasMore = true;
@@ -48,7 +49,15 @@
 	};
 
 	async function searchCurseForge(reset = false) {
-		if (!searchQuery.trim()) return;
+		const trimmedQuery = searchQuery.trim();
+		if (trimmedQuery.length < 2) {
+			searchResults = [];
+			searchError = null;
+			hasMore = false;
+			searchLoading = false;
+			loadingMore = false;
+			return;
+		}
 
 		if (reset) {
 			pageIndex = 0;
@@ -65,7 +74,7 @@
 			const classId = classIdMap[searchType];
 			const { sort, order } = getSortParams();
 			const params = new URLSearchParams({
-				query: searchQuery,
+				query: trimmedQuery,
 				classId: String(classId),
 				index: String(pageIndex),
 				pageSize: String(pageSize)
@@ -116,6 +125,16 @@
 			default:
 				return { sort: 'downloads', order: 'desc' };
 		}
+	}
+
+	function scheduleSearch() {
+		if (searchDebounce) {
+			clearTimeout(searchDebounce);
+		}
+
+		searchDebounce = setTimeout(() => {
+			searchCurseForge(true);
+		}, 350);
 	}
 
 	function getInstallKey(modId: number, fileId?: number) {
@@ -344,6 +363,7 @@
 				type="text"
 				bind:value={searchQuery}
 				placeholder="Search CurseForge..."
+				oninput={scheduleSearch}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') searchCurseForge(true);
 				}}
