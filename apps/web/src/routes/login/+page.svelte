@@ -13,12 +13,22 @@
 		href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
 		rel="stylesheet"
 	/>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+		rel="stylesheet"
+	/>
 </svelte:head>
 
 <div class="container">
 	<div class="login-box">
 		<div class="header">
-			<h1>MineOS</h1>
+			<div class="logo-wrap">
+				<img src="/mineos-logo.svg" alt="MineOS logo" class="logo-icon" />
+				<div>
+					<h1>MineOS</h1>
+					<p class="tagline">Minecraft Control</p>
+				</div>
+			</div>
 			<p class="subtitle">Sign in to manage your servers</p>
 		</div>
 
@@ -71,7 +81,9 @@
 	:global(body) {
 		margin: 0;
 		font-family: 'Space Grotesk', system-ui, sans-serif;
-		background: radial-gradient(circle at top, #1f2538 0%, #0f1118 55%, #0b0c12 100%);
+		background: radial-gradient(circle at top, rgba(106, 176, 76, 0.15), transparent 55%),
+			radial-gradient(circle at 20% 20%, rgba(111, 181, 255, 0.12), transparent 40%),
+			linear-gradient(180deg, #151923 0%, #0d0f16 60%, #0a0c12 100%);
 		color: #eef0f8;
 		min-height: 100vh;
 	}
@@ -91,6 +103,7 @@
 		box-shadow: 0 24px 50px rgba(0, 0, 0, 0.35);
 		width: 100%;
 		max-width: 420px;
+		border: 1px solid rgba(106, 176, 76, 0.2);
 	}
 
 	.header {
@@ -98,10 +111,32 @@
 		margin-bottom: 32px;
 	}
 
+	.logo-wrap {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		margin-bottom: 12px;
+	}
+
+	.logo-icon {
+		width: 44px;
+		height: 44px;
+	}
+
 	h1 {
-		margin: 0 0 8px;
-		font-size: 32px;
-		font-weight: 600;
+		margin: 0 0 6px;
+		font-size: 22px;
+		font-weight: 400;
+		font-family: 'Press Start 2P', 'Space Grotesk', sans-serif;
+	}
+
+	.tagline {
+		margin: 0;
+		font-size: 11px;
+		color: #7c87b2;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
 	}
 
 	.subtitle {
@@ -141,7 +176,8 @@
 
 	input:focus {
 		outline: none;
-		border-color: #5865f2;
+		border-color: rgba(106, 176, 76, 0.7);
+		box-shadow: 0 0 0 2px rgba(106, 176, 76, 0.2);
 	}
 
 	input:disabled {
@@ -150,7 +186,7 @@
 	}
 
 	button {
-		background: #5865f2;
+		background: #6ab04c;
 		color: white;
 		border: none;
 		border-radius: 8px;
@@ -163,7 +199,7 @@
 	}
 
 	button:hover:not(:disabled) {
-		background: #4752c4;
+		background: #4a8b34;
 	}
 
 	button:disabled {
