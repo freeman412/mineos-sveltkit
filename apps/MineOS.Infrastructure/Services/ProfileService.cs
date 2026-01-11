@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -5,11 +6,28 @@ using Microsoft.Extensions.Options;
 using MineOS.Application.Dtos;
 using MineOS.Application.Interfaces;
 using MineOS.Application.Options;
+using MineOS.Infrastructure.Utilities;
 
 namespace MineOS.Infrastructure.Services;
 
 public sealed class ProfileService : IProfileService
 {
+    private const string BuildToolsJarName = "BuildTools.jar";
+    private const string BuildToolsUrl =
+        "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar";
+    private const string PaperProjectUrl = "https://api.papermc.io/v2/projects/paper";
+    private const int PaperVersionLimit = 8;
+    private static readonly TimeSpan PaperCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly SemaphoreSlim PaperCacheLock = new(1, 1);
+    private static DateTimeOffset? _paperLastFetch;
+    private static List<ProfileDto> _paperCache = new();
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
     private readonly ILogger<ProfileService> _logger;
     private readonly HostOptions _hostOptions;
     private readonly HttpClient _httpClient;
@@ -25,7 +43,10 @@ public sealed class ProfileService : IProfileService
     }
 
     private string GetProfilesPath() =>
-        Path.Combine(_hostOptions.BaseDirectory, "profiles");
+        Path.Combine(_hostOptions.BaseDirectory, _hostOptions.ProfilesPathSegment);
+
+    private string GetProfilesFilePath() =>
+        Path.Combine(GetProfilesPath(), "profiles.json");
 
     private string GetProfilePath(string id) =>
         Path.Combine(GetProfilesPath(), id);
@@ -33,35 +54,53 @@ public sealed class ProfileService : IProfileService
     private string GetServerPath(string serverName) =>
         Path.Combine(_hostOptions.BaseDirectory, _hostOptions.ServersPathSegment, serverName);
 
-    public async Task<IEnumerable<ProfileInfoDto>> ListProfilesAsync(CancellationToken cancellationToken)
+    private string GetProfileJarPath(ProfileDto profile)
     {
-        var profilesPath = GetProfilesPath();
-        var profilesFile = Path.Combine(profilesPath, "profiles.json");
-
-        if (!File.Exists(profilesFile))
-        {
-            // Return default profiles if no custom profiles exist
-            return GetDefaultProfiles();
-        }
-
-        var json = await File.ReadAllTextAsync(profilesFile, cancellationToken);
-        var profiles = JsonSerializer.Deserialize<List<ProfileInfoDto>>(json, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        }) ?? new List<ProfileInfoDto>();
-
-        // Check which profiles are downloaded
-        return profiles.Select(p => p with
-        {
-            Downloaded = File.Exists(Path.Combine(GetProfilePath(p.Id), $"{p.Id}.jar")),
-            Size = GetProfileSize(p.Id)
-        });
+        var filename = string.IsNullOrWhiteSpace(profile.Filename) ? $"{profile.Id}.jar" : profile.Filename;
+        return Path.Combine(GetProfilePath(profile.Id), filename);
     }
 
-    public async Task<ProfileInfoDto?> GetProfileAsync(string id, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ProfileDto>> ListProfilesAsync(CancellationToken cancellationToken)
+    {
+        var profiles = await LoadProfilesAsync(cancellationToken);
+        var paperProfiles = await GetPaperProfilesAsync(cancellationToken);
+        var combined = new Dictionary<string, ProfileDto>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var profile in profiles)
+        {
+            combined[profile.Id] = profile;
+        }
+
+        foreach (var profile in paperProfiles)
+        {
+            combined[profile.Id] = profile;
+        }
+
+        var ordered = combined.Values
+            .OrderBy(p => p.Group)
+            .ThenByDescending(p => TryParseVersion(p.Version) ?? new Version(0, 0))
+            .ThenBy(p => p.Id)
+            .ToList();
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var profile = ordered[i];
+            var jarPath = GetProfileJarPath(profile);
+            var filename = Path.GetFileName(jarPath);
+            ordered[i] = profile with
+            {
+                Filename = filename,
+                Downloaded = File.Exists(jarPath)
+            };
+        }
+
+        return ordered;
+    }
+
+    public async Task<ProfileDto?> GetProfileAsync(string id, CancellationToken cancellationToken)
     {
         var profiles = await ListProfilesAsync(cancellationToken);
-        return profiles.FirstOrDefault(p => p.Id == id);
+        return profiles.FirstOrDefault(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<string> DownloadProfileAsync(string id, CancellationToken cancellationToken)
@@ -72,16 +111,20 @@ public sealed class ProfileService : IProfileService
             throw new ArgumentException($"Profile '{id}' not found");
         }
 
-        var profilePath = GetProfilePath(id);
+        if (string.IsNullOrWhiteSpace(profile.Url))
+        {
+            throw new InvalidOperationException($"Profile '{id}' does not have a download URL");
+        }
+
+        var profilePath = GetProfilePath(profile.Id);
         Directory.CreateDirectory(profilePath);
 
-        var jarPath = Path.Combine(profilePath, $"{id}.jar");
+        var jarPath = GetProfileJarPath(profile);
 
-        // Download the JAR file
         using var response = await _httpClient.GetAsync(profile.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
-        using var fileStream = new FileStream(jarPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await using var fileStream = new FileStream(jarPath, FileMode.Create, FileAccess.Write, FileShare.None);
         await response.Content.CopyToAsync(fileStream, cancellationToken);
 
         _logger.LogInformation("Downloaded profile {ProfileId} to {JarPath}", id, jarPath);
@@ -97,7 +140,7 @@ public sealed class ProfileService : IProfileService
             throw new ArgumentException($"Profile '{profileId}' not found");
         }
 
-        var profileJarPath = Path.Combine(GetProfilePath(profileId), $"{profileId}.jar");
+        var profileJarPath = GetProfileJarPath(profile);
         if (!File.Exists(profileJarPath))
         {
             throw new FileNotFoundException($"Profile JAR not downloaded: {profileId}");
@@ -109,10 +152,11 @@ public sealed class ProfileService : IProfileService
             throw new DirectoryNotFoundException($"Server '{serverName}' not found");
         }
 
-        var targetJarPath = Path.Combine(serverPath, $"{profileId}.jar");
+        var jarFilename = Path.GetFileName(profileJarPath);
+        var targetJarPath = Path.Combine(serverPath, jarFilename);
 
-        // Copy the JAR file
         File.Copy(profileJarPath, targetJarPath, overwrite: true);
+        await UpdateServerConfigJarAsync(serverPath, jarFilename, cancellationToken);
 
         _logger.LogInformation("Copied profile {ProfileId} to server {ServerName}", profileId, serverName);
     }
@@ -122,7 +166,7 @@ public sealed class ProfileService : IProfileService
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var profile = await GetProfileAsync(id, cancellationToken);
-        if (profile == null)
+        if (profile == null || string.IsNullOrWhiteSpace(profile.Url))
         {
             yield break;
         }
@@ -130,7 +174,7 @@ public sealed class ProfileService : IProfileService
         var profilePath = GetProfilePath(id);
         Directory.CreateDirectory(profilePath);
 
-        var jarPath = Path.Combine(profilePath, $"{id}.jar");
+        var jarPath = GetProfileJarPath(profile);
 
         yield return new ProfileDownloadProgressDto(0, null, 0, "Starting download");
 
@@ -139,8 +183,8 @@ public sealed class ProfileService : IProfileService
 
         var totalBytes = response.Content.Headers.ContentLength;
 
-        using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var fileStream = new FileStream(jarPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var fileStream = new FileStream(jarPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
         var buffer = new byte[8192];
         long bytesDownloaded = 0;
@@ -166,48 +210,400 @@ public sealed class ProfileService : IProfileService
         _logger.LogInformation("Downloaded profile {ProfileId} to {JarPath}", id, jarPath);
     }
 
-    private long? GetProfileSize(string id)
+    public async Task<ProfileDto> BuildToolsAsync(string group, string version, CancellationToken cancellationToken)
     {
-        var jarPath = Path.Combine(GetProfilePath(id), $"{id}.jar");
-        if (!File.Exists(jarPath))
+        if (string.IsNullOrWhiteSpace(group))
+        {
+            throw new ArgumentException("BuildTools group is required");
+        }
+
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            throw new ArgumentException("BuildTools version is required");
+        }
+
+        var normalizedGroup = group.Trim().ToLowerInvariant();
+        var normalizedVersion = version.Trim();
+
+        var compileArg = normalizedGroup switch
+        {
+            "spigot" => "SPIGOT",
+            "craftbukkit" => "CRAFTBUKKIT",
+            "bukkit" => "CRAFTBUKKIT",
+            _ => throw new ArgumentException($"Unsupported BuildTools group: {group}")
+        };
+
+        var profileId = $"{normalizedGroup}-{normalizedVersion}";
+        var profilePath = GetProfilePath(profileId);
+        Directory.CreateDirectory(profilePath);
+
+        var buildToolsPath = Path.Combine(profilePath, BuildToolsJarName);
+        if (!File.Exists(buildToolsPath))
+        {
+            using var response = await _httpClient.GetAsync(BuildToolsUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            await using var fileStream = new FileStream(buildToolsPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await response.Content.CopyToAsync(fileStream, cancellationToken);
+        }
+
+        var args = $"-jar {BuildToolsJarName} --rev {normalizedVersion} --compile {compileArg}";
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "java",
+            Arguments = args,
+            WorkingDirectory = profilePath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null)
+        {
+            throw new InvalidOperationException("Failed to start BuildTools process");
+        }
+
+        await process.WaitForExitAsync(cancellationToken);
+
+        if (process.ExitCode != 0)
+        {
+            var error = await process.StandardError.ReadToEndAsync(cancellationToken);
+            throw new InvalidOperationException($"BuildTools failed: {error}");
+        }
+
+        var sourceJarName = normalizedGroup == "spigot"
+            ? $"spigot-{normalizedVersion}.jar"
+            : $"craftbukkit-{normalizedVersion}.jar";
+        var sourceJarPath = Path.Combine(profilePath, sourceJarName);
+
+        if (!File.Exists(sourceJarPath))
+        {
+            var candidate = Directory.GetFiles(profilePath, $"*{normalizedVersion}*.jar")
+                .FirstOrDefault(path => !path.EndsWith(BuildToolsJarName, StringComparison.OrdinalIgnoreCase));
+            if (candidate == null)
+            {
+                throw new FileNotFoundException($"BuildTools output not found for {normalizedGroup} {normalizedVersion}");
+            }
+
+            sourceJarPath = candidate;
+        }
+
+        var targetJarName = $"{profileId}.jar";
+        var targetJarPath = Path.Combine(profilePath, targetJarName);
+        File.Copy(sourceJarPath, targetJarPath, overwrite: true);
+
+        var profile = new ProfileDto(
+            profileId,
+            normalizedGroup,
+            "buildtools",
+            normalizedVersion,
+            DateTimeOffset.UtcNow.ToString("O"),
+            BuildToolsUrl,
+            targetJarName,
+            true,
+            null);
+
+        var profiles = await LoadProfilesAsync(cancellationToken);
+        var index = profiles.FindIndex(p => p.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            profiles[index] = profile;
+        }
+        else
+        {
+            profiles.Add(profile);
+        }
+
+        await SaveProfilesAsync(profiles, cancellationToken);
+
+        _logger.LogInformation("Built BuildTools profile {ProfileId}", profileId);
+
+        return profile;
+    }
+
+    public async Task DeleteBuildToolsAsync(string id, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            throw new ArgumentException("Profile id is required");
+        }
+
+        var profiles = await LoadProfilesAsync(cancellationToken);
+        var updated = profiles.Where(p => !p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).ToList();
+        await SaveProfilesAsync(updated, cancellationToken);
+
+        var profilePath = GetProfilePath(id);
+        if (Directory.Exists(profilePath))
+        {
+            Directory.Delete(profilePath, recursive: true);
+        }
+
+        _logger.LogInformation("Deleted BuildTools profile {ProfileId}", id);
+    }
+
+    private async Task UpdateServerConfigJarAsync(string serverPath, string jarFilename, CancellationToken cancellationToken)
+    {
+        var configPath = Path.Combine(serverPath, "server.config");
+        if (!File.Exists(configPath))
+        {
+            return;
+        }
+
+        var content = await File.ReadAllTextAsync(configPath, cancellationToken);
+        var sections = IniParser.ParseWithSections(content);
+
+        if (!sections.TryGetValue("java", out var javaSection))
+        {
+            javaSection = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            sections["java"] = javaSection;
+        }
+
+        javaSection["jarfile"] = jarFilename;
+
+        var updated = IniParser.WriteWithSections(sections);
+        await File.WriteAllTextAsync(configPath, updated, cancellationToken);
+    }
+
+    private async Task<List<ProfileDto>> LoadProfilesAsync(CancellationToken cancellationToken)
+    {
+        var profilesFile = GetProfilesFilePath();
+        if (!File.Exists(profilesFile))
+        {
+            return GetDefaultProfiles().ToList();
+        }
+
+        var json = await File.ReadAllTextAsync(profilesFile, cancellationToken);
+        var profiles = JsonSerializer.Deserialize<List<ProfileDto>>(json, JsonOptions) ?? new List<ProfileDto>();
+        return profiles;
+    }
+
+    private async Task<IReadOnlyList<ProfileDto>> GetPaperProfilesAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_paperLastFetch.HasValue &&
+            now - _paperLastFetch.Value < PaperCacheTtl &&
+            _paperCache.Count > 0)
+        {
+            return _paperCache;
+        }
+
+        await PaperCacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_paperLastFetch.HasValue &&
+                now - _paperLastFetch.Value < PaperCacheTtl &&
+                _paperCache.Count > 0)
+            {
+                return _paperCache;
+            }
+
+            var fetched = await FetchPaperProfilesAsync(cancellationToken);
+            if (fetched.Count > 0)
+            {
+                _paperCache = fetched.ToList();
+                _paperLastFetch = DateTimeOffset.UtcNow;
+            }
+            else if (_paperCache.Count == 0)
+            {
+                _paperLastFetch = DateTimeOffset.UtcNow;
+            }
+
+            return _paperCache;
+        }
+        finally
+        {
+            PaperCacheLock.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<ProfileDto>> FetchPaperProfilesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var json = await _httpClient.GetStringAsync(PaperProjectUrl, cancellationToken);
+            using var doc = JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("versions", out var versionsElement) ||
+                versionsElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<ProfileDto>();
+            }
+
+            var versions = new List<(string Raw, Version Parsed)>();
+            foreach (var element in versionsElement.EnumerateArray())
+            {
+                var versionText = element.GetString();
+                if (string.IsNullOrWhiteSpace(versionText))
+                {
+                    continue;
+                }
+
+                if (!IsStablePaperVersion(versionText))
+                {
+                    continue;
+                }
+
+                if (Version.TryParse(versionText, out var parsed))
+                {
+                    versions.Add((versionText, parsed));
+                }
+            }
+
+            var recentVersions = versions
+                .OrderByDescending(v => v.Parsed)
+                .Take(PaperVersionLimit)
+                .Select(v => v.Raw)
+                .ToList();
+
+            var results = new List<ProfileDto>();
+            foreach (var version in recentVersions)
+            {
+                try
+                {
+                    var build = await GetLatestPaperBuildAsync(version, cancellationToken);
+                    if (build == null)
+                    {
+                        continue;
+                    }
+
+                    var url =
+                        $"https://api.papermc.io/v2/projects/paper/versions/{version}/builds/{build.Build}/downloads/{build.FileName}";
+
+                    results.Add(new ProfileDto(
+                        $"paper-{version}",
+                        "paper",
+                        "release",
+                        version,
+                        build.Time,
+                        url,
+                        build.FileName,
+                        false,
+                        null));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load Paper build for {Version}", version);
+                }
+            }
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to fetch Paper profiles");
+            return Array.Empty<ProfileDto>();
+        }
+    }
+
+    private async Task<PaperBuildInfo?> GetLatestPaperBuildAsync(string version, CancellationToken cancellationToken)
+    {
+        var versionUrl = $"{PaperProjectUrl}/versions/{version}";
+        var json = await _httpClient.GetStringAsync(versionUrl, cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+
+        if (!doc.RootElement.TryGetProperty("builds", out var buildsElement) ||
+            buildsElement.ValueKind != JsonValueKind.Array)
         {
             return null;
         }
 
-        return new FileInfo(jarPath).Length;
+        var builds = buildsElement
+            .EnumerateArray()
+            .Select(element => element.GetInt32())
+            .ToList();
+
+        if (builds.Count == 0)
+        {
+            return null;
+        }
+
+        var latestBuild = builds[^1];
+        var buildUrl = $"{versionUrl}/builds/{latestBuild}";
+        var buildJson = await _httpClient.GetStringAsync(buildUrl, cancellationToken);
+        using var buildDoc = JsonDocument.Parse(buildJson);
+
+        var time = buildDoc.RootElement.TryGetProperty("time", out var timeElement)
+            ? timeElement.GetString() ?? DateTimeOffset.UtcNow.ToString("O")
+            : DateTimeOffset.UtcNow.ToString("O");
+
+        string fileName = $"paper-{version}-{latestBuild}.jar";
+        if (buildDoc.RootElement.TryGetProperty("downloads", out var downloadsElement) &&
+            downloadsElement.TryGetProperty("application", out var appElement) &&
+            appElement.TryGetProperty("name", out var nameElement))
+        {
+            fileName = nameElement.GetString() ?? fileName;
+        }
+
+        return new PaperBuildInfo(latestBuild, time, fileName);
     }
 
-    private static IEnumerable<ProfileInfoDto> GetDefaultProfiles()
+    private static bool IsStablePaperVersion(string version)
     {
+        return !version.Contains('-', StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Version? TryParseVersion(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return null;
+        }
+
+        return Version.TryParse(version, out var parsed) ? parsed : null;
+    }
+
+    private async Task SaveProfilesAsync(List<ProfileDto> profiles, CancellationToken cancellationToken)
+    {
+        var profilesPath = GetProfilesPath();
+        Directory.CreateDirectory(profilesPath);
+
+        var json = JsonSerializer.Serialize(profiles, JsonOptions);
+        await File.WriteAllTextAsync(GetProfilesFilePath(), json, cancellationToken);
+    }
+
+    private static IEnumerable<ProfileDto> GetDefaultProfiles()
+    {
+        var now = DateTimeOffset.UtcNow.ToString("O");
         return new[]
         {
-            new ProfileInfoDto(
+            new ProfileDto(
                 "vanilla-1.20.4",
-                "Vanilla 1.20.4",
-                "1.20.4",
                 "vanilla",
+                "release",
+                "1.20.4",
+                now,
                 "https://piston-data.mojang.com/v1/objects/8dd1a28015f51b1803213892b50b7b4fc76e594d/server.jar",
+                "vanilla-1.20.4.jar",
                 false,
                 null
             ),
-            new ProfileInfoDto(
+            new ProfileDto(
                 "vanilla-1.19.4",
-                "Vanilla 1.19.4",
-                "1.19.4",
                 "vanilla",
+                "release",
+                "1.19.4",
+                now,
                 "https://piston-data.mojang.com/v1/objects/8f3112a1049751cc472ec13e397eade5336ca7ae/server.jar",
+                "vanilla-1.19.4.jar",
                 false,
                 null
             ),
-            new ProfileInfoDto(
+            new ProfileDto(
                 "paper-1.20.4",
-                "Paper 1.20.4",
-                "1.20.4",
                 "paper",
+                "release",
+                "1.20.4",
+                now,
                 "https://api.papermc.io/v2/projects/paper/versions/1.20.4/builds/496/downloads/paper-1.20.4-496.jar",
+                "paper-1.20.4.jar",
                 false,
                 null
             )
         };
     }
+
+    private record PaperBuildInfo(int Build, string Time, string FileName);
 }

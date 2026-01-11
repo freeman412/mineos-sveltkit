@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Mvc;
 using MineOS.Application.Interfaces;
 
 namespace MineOS.Api.Endpoints;
@@ -17,7 +18,7 @@ public static class HostEndpoints
         host.MapGet("/metrics/stream",
             async (HttpContext context,
                 IHostService hostService,
-                IOptions<JsonOptions> jsonOptions,
+                IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
                 CancellationToken cancellationToken) =>
             {
                 // Configure SSE headers
@@ -58,26 +59,127 @@ public static class HostEndpoints
         host.MapGet("/servers", async (IHostService hostService, CancellationToken cancellationToken) =>
             Results.Ok(await hostService.GetServersAsync(cancellationToken)));
 
-        host.MapGet("/profiles", async (IHostService hostService, CancellationToken cancellationToken) =>
-            Results.Ok(await hostService.GetProfilesAsync(cancellationToken)));
+        host.MapGet("/profiles", async (IProfileService profileService, CancellationToken cancellationToken) =>
+            Results.Ok(await profileService.ListProfilesAsync(cancellationToken)));
 
-        host.MapPost("/profiles/{id}/download", () =>
-            EndpointHelpers.NotImplementedFeature("host.profiles.download"));
+        host.MapPost("/profiles/{id}/download", async (
+            string id,
+            IProfileService profileService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var jarPath = await profileService.DownloadProfileAsync(id, cancellationToken);
+                return Results.Ok(new { message = $"Profile '{id}' downloaded", path = jarPath });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            catch (HttpRequestException ex)
+            {
+                return Results.Conflict(new { error = $"Download failed: {ex.Message}" });
+            }
+        });
 
-        host.MapPost("/profiles/buildtools", () =>
-            EndpointHelpers.NotImplementedFeature("host.profiles.buildtools"));
+        host.MapPost("/profiles/buildtools", async (
+            [FromBody] BuildToolsRequest request,
+            IProfileService profileService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var profile = await profileService.BuildToolsAsync(request.Group, request.Version, cancellationToken);
+                return Results.Ok(profile);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
 
-        host.MapDelete("/profiles/buildtools/{id}", () =>
-            EndpointHelpers.NotImplementedFeature("host.profiles.buildtools.delete"));
+        host.MapDelete("/profiles/buildtools/{id}", async (
+            string id,
+            IProfileService profileService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await profileService.DeleteBuildToolsAsync(id, cancellationToken);
+                return Results.Ok(new { message = $"Profile '{id}' deleted" });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
 
-        host.MapPost("/profiles/{id}/copy-to-server", () =>
-            EndpointHelpers.NotImplementedFeature("host.profiles.copy-to-server"));
+        host.MapPost("/profiles/{id}/copy-to-server", async (
+            string id,
+            [FromBody] CopyProfileRequest request,
+            IProfileService profileService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await profileService.CopyProfileToServerAsync(id, request.ServerName, cancellationToken);
+                return Results.Ok(new { message = $"Profile '{id}' copied to server '{request.ServerName}'" });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
 
         host.MapGet("/imports", async (IHostService hostService, CancellationToken cancellationToken) =>
             Results.Ok(await hostService.GetImportsAsync(cancellationToken)));
 
-        host.MapPost("/imports/{filename}/create-server", () =>
-            EndpointHelpers.NotImplementedFeature("host.imports.create-server"));
+        host.MapPost("/imports/{filename}/create-server", async (
+            string filename,
+            [FromBody] ImportServerRequest request,
+            IImportService importService,
+            IServerService serverService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await importService.CreateServerFromImportAsync(filename, request.ServerName, cancellationToken);
+                var server = await serverService.GetServerAsync(request.ServerName, cancellationToken);
+                return Results.Ok(server);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (FileNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
 
         host.MapGet("/locales", async (IHostService hostService, CancellationToken cancellationToken) =>
             Results.Ok(await hostService.GetLocalesAsync(cancellationToken)));
@@ -91,3 +193,6 @@ public static class HostEndpoints
         return api;
     }
 }
+
+public record BuildToolsRequest(string Group, string Version);
+public record ImportServerRequest(string ServerName);

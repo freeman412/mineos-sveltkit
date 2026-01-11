@@ -37,7 +37,7 @@ public sealed class FileService : IFileService
         return normalizedPath;
     }
 
-    public async Task<IEnumerable<FileEntryDto>> ListFilesAsync(string serverName, string path, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<FileEntryDto>> ListFilesAsync(string serverName, string path, CancellationToken cancellationToken)
     {
         var fullPath = GetSafePath(serverName, path);
 
@@ -72,10 +72,15 @@ public sealed class FileService : IFileService
             ));
         }
 
-        return await Task.FromResult(entries.OrderByDescending(e => e.IsDirectory).ThenBy(e => e.Name));
+        var ordered = entries
+            .OrderByDescending(e => e.IsDirectory)
+            .ThenBy(e => e.Name)
+            .ToList();
+
+        return await Task.FromResult<IReadOnlyList<FileEntryDto>>(ordered);
     }
 
-    public async Task<string> ReadFileAsync(string serverName, string path, CancellationToken cancellationToken)
+    public async Task<FileContentDto> ReadFileAsync(string serverName, string path, CancellationToken cancellationToken)
     {
         var fullPath = GetSafePath(serverName, path);
 
@@ -84,14 +89,15 @@ public sealed class FileService : IFileService
             throw new FileNotFoundException($"File not found: {path}");
         }
 
-        // Limit file size to 1MB for safety
         var fileInfo = new FileInfo(fullPath);
+        // Limit file size to 1MB for safety
         if (fileInfo.Length > 1024 * 1024)
         {
             throw new InvalidOperationException("File too large to read (max 1MB)");
         }
 
-        return await File.ReadAllTextAsync(fullPath, cancellationToken);
+        var content = await File.ReadAllTextAsync(fullPath, cancellationToken);
+        return new FileContentDto(path, content, fileInfo.Length, fileInfo.LastWriteTimeUtc);
     }
 
     public async Task WriteFileAsync(string serverName, string path, string content, CancellationToken cancellationToken)
@@ -107,6 +113,20 @@ public sealed class FileService : IFileService
 
         await File.WriteAllTextAsync(fullPath, content, cancellationToken);
         _logger.LogInformation("Wrote file {Path} for server {ServerName}", path, serverName);
+    }
+
+    public async Task WriteFileBytesAsync(string serverName, string path, byte[] content, CancellationToken cancellationToken)
+    {
+        var fullPath = GetSafePath(serverName, path);
+
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await File.WriteAllBytesAsync(fullPath, content, cancellationToken);
+        _logger.LogInformation("Wrote binary file {Path} for server {ServerName}", path, serverName);
     }
 
     public Task DeleteFileAsync(string serverName, string path, CancellationToken cancellationToken)

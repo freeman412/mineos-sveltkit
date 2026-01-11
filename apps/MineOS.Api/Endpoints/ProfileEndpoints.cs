@@ -106,4 +106,4 @@ public static class ProfileEndpoints
     }
 }
 
-public record CopyProfileRequest(string ServerName);
+public record CopyProfileRequest(string ServerName, string? Type);
