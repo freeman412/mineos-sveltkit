@@ -214,3 +214,40 @@ export type PlayerStats = {
 	rawJson: string;
 	lastModified: string | null;
 };
+
+// Mojang API types
+export type MojangProfile = {
+	uuid: string;
+	name: string;
+	avatarUrl: string;
+};
+
+// Forge types
+export type ForgeVersion = {
+	minecraftVersion: string;
+	forgeVersion: string;
+	fullVersion: string;
+	isRecommended: boolean;
+	isLatest: boolean;
+	releaseDate: string | null;
+};
+
+export type ForgeInstallResult = {
+	installId: string;
+	status: string;
+	error: string | null;
+};
+
+export type ForgeInstallStatus = {
+	installId: string;
+	minecraftVersion: string;
+	forgeVersion: string;
+	serverName: string;
+	status: string;
+	progress: number;
+	currentStep: string | null;
+	error: string | null;
+	output: string | null;
+	startedAt: string;
+	completedAt: string | null;
+};

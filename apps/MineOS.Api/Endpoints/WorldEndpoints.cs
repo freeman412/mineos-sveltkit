@@ -8,7 +8,7 @@ public static class WorldEndpoints
 {
     public static IEndpointRouteBuilder MapWorldEndpoints(this IEndpointRouteBuilder api)
     {
-        var worlds = api.MapGroup("/api/servers/{serverName}/worlds")
+        var worlds = api.MapGroup("/servers/{serverName}/worlds")
             .WithTags("Worlds")
             .RequireAuthorization();
 

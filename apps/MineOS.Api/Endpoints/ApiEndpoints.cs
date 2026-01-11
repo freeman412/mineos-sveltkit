@@ -16,6 +16,7 @@ public static class ApiEndpoints
         api.MapProfileEndpoints();
         api.MapJobEndpoints();
         api.MapCurseForgeEndpoints();
+        api.MapForgeEndpoints();
         api.MapAdminEndpoints();
 
         return app;
