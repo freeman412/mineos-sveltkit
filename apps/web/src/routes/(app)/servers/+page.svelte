@@ -6,9 +6,6 @@
 	let { data }: { data: PageData } = $props();
 
 	let actionLoading = $state<Record<string, boolean>>({});
-	let showCreateModal = $state(false);
-	let newServerName = $state('');
-	let createError = $state('');
 
 	async function handleAction(serverName: string, action: 'start' | 'stop' | 'restart' | 'kill') {
 		actionLoading[serverName] = true;
@@ -59,28 +56,6 @@
 			actionLoading = { ...actionLoading };
 		}
 	}
-
-	async function handleCreateServer() {
-		if (!newServerName.trim()) {
-			createError = 'Server name is required';
-			return;
-		}
-
-		createError = '';
-		const result = await api.createServer(fetch, {
-			name: newServerName.trim(),
-			ownerUid: 1000, // TODO: Get from current user
-			ownerGid: 1000
-		});
-
-		if (result.error) {
-			createError = result.error;
-		} else {
-			showCreateModal = false;
-			newServerName = '';
-			await invalidateAll();
-		}
-	}
 </script>
 
 <div class="page-header">
@@ -88,9 +63,9 @@
 		<h1>Servers</h1>
 		<p class="subtitle">Manage your Minecraft servers</p>
 	</div>
-	<button class="btn-primary" onclick={() => (showCreateModal = true)}>
+	<a href="/servers/new" class="btn-primary">
 		<span>+</span> Create Server
-	</button>
+	</a>
 </div>
 
 {#if data.servers.error}
@@ -180,32 +155,7 @@
 		<p class="empty-icon">📦</p>
 		<h2>No servers yet</h2>
 		<p>Create your first Minecraft server to get started</p>
-		<button class="btn-primary" onclick={() => (showCreateModal = true)}>Create Server</button>
-	</div>
-{/if}
-
-{#if showCreateModal}
-	<div class="modal-overlay" onclick={() => (showCreateModal = false)}>
-		<div class="modal" onclick={(e) => e.stopPropagation()}>
-			<h2>Create New Server</h2>
-			<div class="form-field">
-				<label for="server-name">Server Name</label>
-				<input
-					type="text"
-					id="server-name"
-					bind:value={newServerName}
-					placeholder="my-server"
-					autofocus
-				/>
-			</div>
-			{#if createError}
-				<div class="error-text">{createError}</div>
-			{/if}
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={() => (showCreateModal = false)}>Cancel</button>
-				<button class="btn-primary" onclick={handleCreateServer}>Create</button>
-			</div>
-		</div>
+		<a href="/servers/new" class="btn-primary">Create Server</a>
 	</div>
 {/if}
 
@@ -404,92 +354,6 @@
 
 	.empty-state p {
 		margin: 0 0 24px;
-	}
-
-	.modal-overlay {
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background: rgba(0, 0, 0, 0.7);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 1000;
-		padding: 24px;
-	}
-
-	.modal {
-		background: #1a1e2f;
-		border-radius: 16px;
-		padding: 28px;
-		max-width: 450px;
-		width: 100%;
-		box-shadow: 0 24px 50px rgba(0, 0, 0, 0.5);
-	}
-
-	.modal h2 {
-		margin: 0 0 20px;
-		font-size: 22px;
-	}
-
-	.form-field {
-		margin-bottom: 20px;
-	}
-
-	.form-field label {
-		display: block;
-		margin-bottom: 8px;
-		font-size: 14px;
-		font-weight: 500;
-		color: #9aa2c5;
-	}
-
-	.form-field input {
-		width: 100%;
-		background: #141827;
-		border: 1px solid #2a2f47;
-		border-radius: 8px;
-		padding: 12px 16px;
-		color: #eef0f8;
-		font-family: inherit;
-		font-size: 14px;
-		box-sizing: border-box;
-	}
-
-	.form-field input:focus {
-		outline: none;
-		border-color: #5865f2;
-	}
-
-	.error-text {
-		color: #ff9f9f;
-		font-size: 13px;
-		margin-bottom: 16px;
-	}
-
-	.modal-actions {
-		display: flex;
-		gap: 12px;
-		justify-content: flex-end;
-	}
-
-	.btn-secondary {
-		background: #2b2f45;
-		color: #d4d9f1;
-		border: none;
-		border-radius: 8px;
-		padding: 10px 20px;
-		font-family: inherit;
-		font-size: 14px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background 0.2s;
-	}
-
-	.btn-secondary:hover {
-		background: #3a3f5a;
 	}
 
 	@media (max-width: 640px) {
