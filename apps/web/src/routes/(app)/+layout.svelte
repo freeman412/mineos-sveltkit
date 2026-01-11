@@ -14,6 +14,7 @@
 
 	const navItems = [
 		{ href: '/dashboard', label: 'Dashboard', icon: '[D]' },
+		{ href: '/search', label: 'Search', icon: '[F]' },
 		{ href: '/servers', label: 'Servers', icon: '[S]' },
 		{ href: '/profiles', label: 'Profiles', icon: '[P]' },
 		{ href: '/import', label: 'Import', icon: '[I]' },
