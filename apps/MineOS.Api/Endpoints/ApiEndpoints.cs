@@ -13,6 +13,7 @@ public static class ApiEndpoints
         api.MapProfileEndpoints();
         api.MapJobEndpoints();
         api.MapCurseForgeEndpoints();
+        api.MapAdminEndpoints();
 
         return app;
     }

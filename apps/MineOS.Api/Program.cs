@@ -199,3 +199,20 @@ using (var scope = app.Services.CreateScope())
 app.MapApiEndpoints();
 
 app.Run();
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                if (string.IsNullOrWhiteSpace(context.Token)
+                    && context.Request.Cookies.TryGetValue("auth_token", out var token)
+                    && !string.IsNullOrWhiteSpace(token))
+                {
+                    context.Token = token;
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+builder.Services.AddScoped<IAdminShellSession, AdminShellService>();
+app.UseWebSockets();
