@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rsync \
     screen \
     tar \
+    util-linux \
     wget \
     && mkdir -p /etc/apt/keyrings \
     && wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public \
@@ -21,6 +22,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y --no-install-recommends temurin-21-jre temurin-8-jre \
     && rm -rf /var/lib/apt/lists/*
+
+# Create minecraft user with UID 1000 and GID 1000
+# This matches the default Host__OwnerUid and Host__OwnerGid settings
+RUN groupadd -g 1000 minecraft && \
+    useradd -u 1000 -g 1000 -m -s /bin/bash minecraft
+
+# Create directory structure and set permissions
+RUN mkdir -p /var/games/minecraft/servers \
+    /var/games/minecraft/profiles \
+    /var/games/minecraft/backups \
+    /var/games/minecraft/archives \
+    /var/games/minecraft/imports \
+    && chown -R minecraft:minecraft /var/games/minecraft
 
 WORKDIR /workspaces/mineos-sveltkit
    
