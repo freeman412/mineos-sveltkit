@@ -75,6 +75,27 @@ public static class CurseForgeEndpoints
             }
         });
 
+        curseforge.MapGet("/mod/{id:int}/files", async (
+            int id,
+            [FromQuery] string? gameVersion,
+            ICurseForgeService curseForgeService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var files = await curseForgeService.GetModFilesListAsync(id, gameVersion, cancellationToken);
+                return Results.Ok(files);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            catch (HttpRequestException)
+            {
+                return Results.StatusCode(502);
+            }
+        });
+
         return api;
     }
 }

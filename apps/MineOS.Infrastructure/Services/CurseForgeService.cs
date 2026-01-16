@@ -95,6 +95,21 @@ public sealed class CurseForgeService : ICurseForgeService
         return MapFile(response.Data);
     }
 
+    public async Task<IReadOnlyList<CurseForgeFileDto>> GetModFilesListAsync(
+        int modId,
+        string? gameVersion,
+        CancellationToken cancellationToken)
+    {
+        var path = $"/v1/mods/{modId}/files?pageSize=50";
+        if (!string.IsNullOrWhiteSpace(gameVersion))
+        {
+            path += $"&gameVersion={Uri.EscapeDataString(gameVersion)}";
+        }
+
+        var response = await _client.GetAsync<List<CurseForgeFileData>>(path, cancellationToken);
+        return response.Data.Select(MapFile).ToList();
+    }
+
     public async Task<string> GetModFileDownloadUrlAsync(int modId, int fileId, CancellationToken cancellationToken)
     {
         var response = await _client.GetAsync<CurseForgeDownloadUrlData>(
@@ -107,6 +122,42 @@ public sealed class CurseForgeService : ICurseForgeService
         }
 
         return response.Data.DownloadUrl;
+    }
+
+    public async Task<IReadOnlyList<CurseForgeFileDto>> GetModFilesAsync(
+        IReadOnlyCollection<int> fileIds,
+        CancellationToken cancellationToken)
+    {
+        if (fileIds == null || fileIds.Count == 0)
+        {
+            return Array.Empty<CurseForgeFileDto>();
+        }
+
+        var response = await _client.PostAsync<List<CurseForgeFileData>>(
+            "/v1/mods/files",
+            new { fileIds },
+            cancellationToken);
+
+        return response.Data.Select(MapFile).ToList();
+    }
+
+    public async Task<IReadOnlyDictionary<int, string>> GetModFileDownloadUrlsAsync(
+        IReadOnlyCollection<int> fileIds,
+        CancellationToken cancellationToken)
+    {
+        if (fileIds == null || fileIds.Count == 0)
+        {
+            return new Dictionary<int, string>();
+        }
+
+        var response = await _client.PostAsync<List<CurseForgeDownloadUrlData>>(
+            "/v1/mods/files/download-urls",
+            new { fileIds },
+            cancellationToken);
+
+        return response.Data
+            .Where(item => item.FileId.HasValue && !string.IsNullOrWhiteSpace(item.DownloadUrl))
+            .ToDictionary(item => item.FileId!.Value, item => item.DownloadUrl!);
     }
 
     private static CurseForgeModSummaryDto MapModSummary(CurseForgeModData mod)
@@ -227,6 +278,7 @@ public sealed class CurseForgeService : ICurseForgeService
 
     private sealed class CurseForgeDownloadUrlData
     {
+        public int? FileId { get; set; }
         public string? DownloadUrl { get; set; }
     }
 }
