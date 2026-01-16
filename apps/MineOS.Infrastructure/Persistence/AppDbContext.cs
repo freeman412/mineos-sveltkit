@@ -44,6 +44,10 @@ public sealed class AppDbContext : DbContext
     // API & Security
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
+    // Mod Management
+    public DbSet<InstalledModpack> InstalledModpacks => Set<InstalledModpack>();
+    public DbSet<InstalledModRecord> InstalledModRecords => Set<InstalledModRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ApiKey>(entity =>
@@ -209,6 +213,30 @@ public sealed class AppDbContext : DbContext
             entity.Property(x => x.Name).HasMaxLength(128);
             entity.Property(x => x.Hostname).HasMaxLength(256);
             entity.Property(x => x.Status).HasMaxLength(32);
+        });
+
+        // Mod Management
+        modelBuilder.Entity<InstalledModpack>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.CurseForgeProjectId }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Name).HasMaxLength(256);
+            entity.Property(x => x.Version).HasMaxLength(64);
+            entity.Property(x => x.LogoUrl).HasMaxLength(512);
+        });
+
+        modelBuilder.Entity<InstalledModRecord>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.FileName }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.FileName).HasMaxLength(256);
+            entity.Property(x => x.ModName).HasMaxLength(256);
+            entity.HasOne(x => x.Modpack)
+                .WithMany(m => m.Mods)
+                .HasForeignKey(x => x.ModpackId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
