@@ -73,7 +73,7 @@ services:
       - CurseForge__ApiKey=${CurseForge__ApiKey:-}
       - Discord__WebhookUrl=${Discord__WebhookUrl:-}
       - Logging__LogLevel__Default=${Logging__LogLevel__Default:-Information}
-      - Logging__LogLevel__Microsoft.AspNetCore=${Logging__LogLevel__Microsoft.AspNetCore:-Warning}
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
     volumes:
       - ${Host__BaseDirectory:-/var/games/minecraft}:/var/games/minecraft
       - ./data:/app/data
@@ -83,36 +83,44 @@ services:
       # Minecraft server ports - expand as needed
       - "25565-25570:25565-25570/tcp"
       - "25565-25570:25565-25570/udp"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5078/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    #healthcheck:
+      #test: ["CMD", "curl", "-f", "http://localhost:5078/health"]
+      #interval: 30s
+      #timeout: 10s
+      #retries: 3
+      #start_period: 40s
 
   # MineOS Web UI
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
-      args:
-        - PUBLIC_API_URL=http://localhost:${API_PORT:-5078}
+      context: .
+      dockerfile: apps/web/Dockerfile
     container_name: mineos-web
     restart: unless-stopped
     environment:
-      - NODE_ENV=production
-      - PUBLIC_API_URL=http://localhost:${API_PORT:-5078}
-      - ORIGIN=http://localhost:${WEB_PORT:-3000}
+      NODE_ENV: production
+
+      # Client-side (browser) should call the API via the host (or your real domain in prod)
+      PUBLIC_API_BASE_URL: http://localhost:${API_PORT:-5078}
+
+      # Server-side (SSR, +server.ts) should call the API via docker DNS
+      PRIVATE_API_BASE_URL: http://api:5078
+
+      # Used by your server routes
+      PRIVATE_API_KEY: ${ApiKey__SeedKey}
+
+      # SvelteKit node server bind
+      HOST: 0.0.0.0
+      PORT: 3000
+
+      # If you actually need it for CSRF / absolute URLs, set it to your real site URL in prod
+      ORIGIN: http://localhost:${WEB_PORT:-3000}
+
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
       - api
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+
 
 volumes:
   postgres_data:
