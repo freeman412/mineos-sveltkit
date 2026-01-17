@@ -8,9 +8,7 @@ public static class CurseForgeEndpoints
 {
     public static RouteGroupBuilder MapCurseForgeEndpoints(this RouteGroupBuilder api)
     {
-        var curseforge = api.MapGroup("/curseforge")
-            .RequireAuthorization()
-            .WithMetadata(new SkipApiKeyAttribute());
+        var curseforge = api.MapGroup("/curseforge");
 
         curseforge.MapGet("/search", async (
             [FromQuery] string? query,

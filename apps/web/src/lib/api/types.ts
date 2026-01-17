@@ -284,3 +284,15 @@ export type InstalledModWithModpack = {
 	modpackName: string | null;
 	curseForgeProjectId: number | null;
 };
+
+// Notification types
+export type SystemNotification = {
+	id: number;
+	type: 'info' | 'warning' | 'error' | 'success';
+	title: string;
+	message: string;
+	createdAt: string;
+	dismissedAt: string | null;
+	isRead: boolean;
+	serverName: string | null;
+};

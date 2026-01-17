@@ -184,6 +184,36 @@ public class ServerService : IServerService
         _logger.LogInformation("Deleted server {ServerName}", name);
     }
 
+    public async Task<List<ServerDetailDto>> ListServersAsync(CancellationToken cancellationToken)
+    {
+        var serversDir = Path.Combine(_options.BaseDirectory, _options.ServersPathSegment);
+        if (!Directory.Exists(serversDir))
+        {
+            return new List<ServerDetailDto>();
+        }
+
+        var serverNames = Directory.GetDirectories(serversDir)
+            .Select(dir => Path.GetFileName(dir))
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToList();
+
+        var serverDetails = new List<ServerDetailDto>();
+        foreach (var name in serverNames)
+        {
+            try
+            {
+                var detail = await GetServerAsync(name!, cancellationToken);
+                serverDetails.Add(detail);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to get details for server {ServerName}", name);
+            }
+        }
+
+        return serverDetails;
+    }
+
     public async Task<ServerHeartbeatDto> GetServerStatusAsync(string name, CancellationToken cancellationToken)
     {
         var serverPath = GetServerPath(name);

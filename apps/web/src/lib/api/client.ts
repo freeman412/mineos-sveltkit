@@ -66,6 +66,12 @@ export async function getServer(
 	return apiFetch(fetcher, `/api/servers/${name}`);
 }
 
+export async function getAllServers(
+	fetcher: Fetcher
+): Promise<ApiResult<import('./types').ServerDetail[]>> {
+	return apiFetch(fetcher, '/api/servers/list');
+}
+
 export async function createServer(
 	fetcher: Fetcher,
 	request: import('./types').CreateServerRequest

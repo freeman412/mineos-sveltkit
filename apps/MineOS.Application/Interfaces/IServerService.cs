@@ -6,6 +6,7 @@ public interface IServerService
 {
     // Server CRUD
     Task<ServerDetailDto> GetServerAsync(string name, CancellationToken cancellationToken);
+    Task<List<ServerDetailDto>> ListServersAsync(CancellationToken cancellationToken);
     Task<ServerDetailDto> CreateServerAsync(CreateServerRequest request, string username, CancellationToken cancellationToken);
     Task DeleteServerAsync(string name, CancellationToken cancellationToken);
 
