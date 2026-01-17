@@ -3,6 +3,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import type { LayoutData } from './$types';
 	import TopBar from '$lib/components/TopBar.svelte';
+	import FeedbackButton from '$lib/components/FeedbackButton.svelte';
 
 	let { data, children }: { data: LayoutData; children: any } = $props();
 
@@ -90,6 +91,8 @@
 			{@render children()}
 		</main>
 	</div>
+
+	<FeedbackButton />
 </div>
 
 <style>
