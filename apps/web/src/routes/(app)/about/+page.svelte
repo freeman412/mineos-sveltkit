@@ -189,6 +189,76 @@
 				</a>
 			</div>
 		</section>
+
+		<section class="card ai-built">
+			<div class="card-icon">🤖</div>
+			<h3>AI-Assisted Development</h3>
+			<p>
+				This project is primarily AI-generated code, maintained and guided by a human developer.
+				We use Claude and other AI assistants to rapidly develop and iterate on features.
+			</p>
+			<p>
+				<strong>Want to contribute?</strong> You can help by donating your AI tokens!
+				Clone the repository, point your AI coding assistant at an open issue, and submit a pull request.
+			</p>
+			<div class="contribute-steps">
+				<ol>
+					<li>Fork the <a href="https://github.com/freeman412/mineos-sveltekit" target="_blank" rel="noopener noreferrer">repository</a></li>
+					<li>Pick an <a href="https://github.com/freeman412/mineos-sveltekit/issues" target="_blank" rel="noopener noreferrer">open issue</a></li>
+					<li>Run your AI agent (Claude Code, Cursor, Copilot, etc.)</li>
+					<li>Submit a pull request with your changes</li>
+				</ol>
+			</div>
+			<p class="ai-note">
+				Every contribution helps, whether it's fixing a bug, adding a feature, or improving documentation!
+			</p>
+		</section>
+
+		<section class="card roadmap full-width">
+			<div class="card-icon">🗺️</div>
+			<h3>Roadmap</h3>
+			<p>
+				Here's what's planned for future releases. Want to help? Pick an item and contribute!
+			</p>
+			<div class="roadmap-grid">
+				<div class="roadmap-category">
+					<h4>High Priority</h4>
+					<ul>
+						<li><span class="status planned">Planned</span> Visual Cron Job Builder</li>
+						<li><span class="status planned">Planned</span> Plugin Configuration Editor</li>
+						<li><span class="status planned">Planned</span> Bulk Server Operations</li>
+						<li><span class="status planned">Planned</span> Discord Integration</li>
+					</ul>
+				</div>
+				<div class="roadmap-category">
+					<h4>Content Management</h4>
+					<ul>
+						<li><span class="status planned">Planned</span> Server Version Migration</li>
+						<li><span class="status planned">Planned</span> Resource Pack Manager</li>
+						<li><span class="status planned">Planned</span> Backup Comparison & Diff</li>
+						<li><span class="status planned">Planned</span> Dynmap Integration</li>
+					</ul>
+				</div>
+				<div class="roadmap-category">
+					<h4>Templates & Automation</h4>
+					<ul>
+						<li><span class="status planned">Planned</span> Server Templates</li>
+						<li><span class="status planned">Planned</span> Auto Server Detection</li>
+						<li><span class="status planned">Planned</span> Server Cloning</li>
+						<li><span class="status planned">Planned</span> Command Palette (Cmd+K)</li>
+					</ul>
+				</div>
+				<div class="roadmap-category">
+					<h4>Advanced Features</h4>
+					<ul>
+						<li><span class="status future">Future</span> Multi-Host Support</li>
+						<li><span class="status future">Future</span> Log Analysis with ML</li>
+						<li><span class="status future">Future</span> API Keys & Webhooks</li>
+						<li><span class="status future">Future</span> Performance Profiling</li>
+					</ul>
+				</div>
+			</div>
+		</section>
 	</div>
 
 	<footer class="about-footer">
@@ -506,6 +576,100 @@
 	.support-link:hover {
 		background: rgba(106, 176, 76, 0.2);
 		border-color: rgba(106, 176, 76, 0.5);
+	}
+
+	/* AI-Built Section */
+	.ai-built .contribute-steps {
+		background: rgba(88, 101, 242, 0.1);
+		border: 1px solid rgba(88, 101, 242, 0.2);
+		border-radius: 10px;
+		padding: 16px 16px 16px 20px;
+		margin-bottom: 16px;
+	}
+
+	.ai-built .contribute-steps ol {
+		margin: 0;
+		padding-left: 20px;
+		color: #9aa2c5;
+		font-size: 14px;
+		line-height: 1.8;
+	}
+
+	.ai-built .ai-note {
+		background: rgba(106, 176, 76, 0.1);
+		border-radius: 8px;
+		padding: 12px 16px;
+		color: #b7f5a2;
+		font-size: 13px;
+		margin-bottom: 0;
+	}
+
+	/* Roadmap Section */
+	.roadmap.full-width {
+		grid-column: 1 / -1;
+	}
+
+	.roadmap-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 20px;
+		margin-top: 16px;
+	}
+
+	.roadmap-category {
+		background: rgba(20, 24, 39, 0.6);
+		border: 1px solid #2a2f47;
+		border-radius: 12px;
+		padding: 16px;
+	}
+
+	.roadmap-category h4 {
+		margin: 0 0 12px;
+		font-size: 14px;
+		font-weight: 600;
+		color: #a5b4fc;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.roadmap-category ul {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+	}
+
+	.roadmap-category li {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 0;
+		border-bottom: 1px solid #2a2f47;
+		font-size: 13px;
+		color: #9aa2c5;
+	}
+
+	.roadmap-category li:last-child {
+		border-bottom: none;
+	}
+
+	.status {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		flex-shrink: 0;
+	}
+
+	.status.planned {
+		background: rgba(106, 176, 76, 0.15);
+		color: #6ab04c;
+	}
+
+	.status.future {
+		background: rgba(88, 101, 242, 0.15);
+		color: #a5b4fc;
 	}
 
 	.about-footer {
