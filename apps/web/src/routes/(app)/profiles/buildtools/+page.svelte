@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { modal } from '$lib/stores/modal';
+	import type { ServerSummary } from '$lib/api/types';
 
 	let buildGroup = $state('spigot');
 	let buildVersion = $state('');
@@ -14,6 +16,11 @@
 	let logContainer: HTMLDivElement | null = null;
 	let eventSource: EventSource | null = null;
 	let loadRunsTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// For copy-to-server quick action
+	let servers = $state<ServerSummary[]>([]);
+	let selectedServer = $state('');
+	let copyLoading = $state(false);
 
 	// Common Minecraft versions for Spigot/CraftBukkit
 	const commonVersions = [
@@ -163,8 +170,49 @@
 		openStream(id);
 	}
 
+	async function loadServers() {
+		try {
+			const res = await fetch('/api/servers');
+			if (res.ok) {
+				const data = await res.json();
+				servers = data ?? [];
+				if (servers.length > 0 && !selectedServer) {
+					selectedServer = servers[0].name;
+				}
+			}
+		} catch {
+			// Ignore server load errors
+		}
+	}
+
+	async function copyToServer() {
+		if (!profileId || !selectedServer) return;
+
+		copyLoading = true;
+		try {
+			const res = await fetch(`/api/host/profiles/${profileId}/copy-to-server`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ serverName: selectedServer })
+			});
+
+			if (!res.ok) {
+				const error = await res.json().catch(() => ({ error: 'Failed to copy profile' }));
+				await modal.error(error.error || 'Failed to copy profile');
+			} else {
+				await modal.alert(
+					`Profile "${profileId}" has been copied to server "${selectedServer}". The server needs to be restarted to use the new JAR file.`,
+					'Profile Copied'
+				);
+			}
+		} finally {
+			copyLoading = false;
+		}
+	}
+
 	onMount(() => {
 		loadRuns();
+		loadServers();
 		const lastRun = localStorage.getItem('mineos_buildtools_run');
 		if (lastRun) {
 			attachRun(lastRun);
@@ -235,6 +283,45 @@
 					Status: <span class:status-running={status === 'running'} class:status-success={status === 'completed'} class:status-failed={status === 'failed'}>{status}</span>
 				</p>
 			</div>
+
+			{#if status === 'completed' && profileId}
+				<div class="success-actions">
+					<div class="success-header">
+						<span class="success-icon">✓</span>
+						<div>
+							<h4>Build Complete!</h4>
+							<p>Your {buildGroup} {buildVersion} JAR is ready to use.</p>
+						</div>
+					</div>
+
+					<div class="quick-actions">
+						<p class="action-label">Deploy to a server:</p>
+						<div class="copy-group">
+							<select bind:value={selectedServer} disabled={copyLoading}>
+								{#each servers as server (server.name)}
+									<option value={server.name}>{server.name}</option>
+								{/each}
+							</select>
+							<button
+								class="btn-primary"
+								onclick={copyToServer}
+								disabled={copyLoading || !selectedServer || servers.length === 0}
+							>
+								{copyLoading ? 'Copying...' : 'Copy to Server'}
+							</button>
+						</div>
+						{#if servers.length === 0}
+							<p class="no-servers">No servers available. <a href="/servers">Create a server</a> first.</p>
+						{/if}
+					</div>
+
+					<div class="alt-actions">
+						<a href="/profiles?group={buildGroup}" class="link-action">
+							View in Profiles →
+						</a>
+					</div>
+				</div>
+			{/if}
 		{/if}
 
 		<div class="run-list">
@@ -476,6 +563,103 @@
 
 	.status-failed {
 		color: #ff9f9f;
+	}
+
+	/* Success Actions */
+	.success-actions {
+		margin-top: 20px;
+		background: rgba(106, 176, 76, 0.1);
+		border: 1px solid rgba(106, 176, 76, 0.3);
+		border-radius: 12px;
+		padding: 16px;
+	}
+
+	.success-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-bottom: 16px;
+	}
+
+	.success-icon {
+		width: 32px;
+		height: 32px;
+		background: rgba(106, 176, 76, 0.2);
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #b7f5a2;
+		font-size: 16px;
+		font-weight: bold;
+	}
+
+	.success-header h4 {
+		margin: 0 0 2px;
+		font-size: 15px;
+		color: #b7f5a2;
+	}
+
+	.success-header p {
+		margin: 0;
+		font-size: 13px;
+		color: #9aa2c5;
+	}
+
+	.quick-actions {
+		background: rgba(20, 24, 39, 0.5);
+		border-radius: 8px;
+		padding: 12px;
+	}
+
+	.action-label {
+		margin: 0 0 10px;
+		font-size: 13px;
+		color: #aab2d3;
+		font-weight: 500;
+	}
+
+	.copy-group {
+		display: flex;
+		gap: 8px;
+	}
+
+	.copy-group select {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.no-servers {
+		margin: 8px 0 0;
+		font-size: 12px;
+		color: #9aa2c5;
+	}
+
+	.no-servers a {
+		color: #6ab04c;
+		text-decoration: none;
+	}
+
+	.no-servers a:hover {
+		text-decoration: underline;
+	}
+
+	.alt-actions {
+		margin-top: 12px;
+		padding-top: 12px;
+		border-top: 1px solid rgba(42, 47, 71, 0.6);
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.link-action {
+		color: #a5b4fc;
+		font-size: 13px;
+		text-decoration: none;
+	}
+
+	.link-action:hover {
+		text-decoration: underline;
 	}
 
 	.log-header {

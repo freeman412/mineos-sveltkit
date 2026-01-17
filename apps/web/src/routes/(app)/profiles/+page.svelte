@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { invalidateAll } from '$app/navigation';
 	import { modal } from '$lib/stores/modal';
 	import type { PageData } from './$types';
@@ -11,6 +13,14 @@
 	let groupFilter = $state('all');
 	let statusFilter = $state<'all' | 'downloaded' | 'missing'>('all');
 	let sortOption = $state<'name' | 'group' | 'version'>('name');
+
+	// Check for group query param on mount
+	onMount(() => {
+		const groupParam = $page.url.searchParams.get('group');
+		if (groupParam) {
+			groupFilter = groupParam;
+		}
+	});
 
 	const profiles = $derived(data.profiles.data ?? []);
 	const servers = $derived(data.servers.data ?? []);
