@@ -11,10 +11,15 @@ public static class ApiEndpoints
         api.MapHostEndpoints();
         api.MapServerEndpoints();
         api.MapWorldEndpoints();
+        api.MapPerformanceEndpoints();
+        api.MapPlayerEndpoints();
         api.MapProfileEndpoints();
         api.MapJobEndpoints();
         api.MapCurseForgeEndpoints();
+        api.MapForgeEndpoints();
         api.MapAdminEndpoints();
+        api.MapNotificationEndpoints();
+        api.MapSettingsEndpoints();
 
         return app;
     }

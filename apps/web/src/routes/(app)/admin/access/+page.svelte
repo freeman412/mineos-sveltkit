@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import { modal } from '$lib/stores/modal';
 	import type { PageData } from './$types';
+
+	interface User {
+		id: number;
+		username: string;
+		role: string;
+		isActive: boolean;
+		createdAt: string;
+	}
 
 	let { data }: { data: PageData } = $props();
 	let creating = $state(false);
@@ -8,6 +17,13 @@
 	let username = $state('');
 	let password = $state('');
 	let role = $state('user');
+
+	let editingUser = $state<User | null>(null);
+	let editPassword = $state('');
+	let editRole = $state('');
+	let editActive = $state(true);
+	let saving = $state(false);
+	let deleting = $state<number | null>(null);
 
 	async function createUser() {
 		formError = '';
@@ -37,18 +53,118 @@
 			creating = false;
 		}
 	}
+
+	function startEdit(user: User) {
+		editingUser = user;
+		editPassword = '';
+		editRole = user.role;
+		editActive = user.isActive;
+	}
+
+	function cancelEdit() {
+		editingUser = null;
+		editPassword = '';
+		editRole = '';
+		editActive = true;
+	}
+
+	async function saveEdit() {
+		if (!editingUser) return;
+
+		saving = true;
+		try {
+			const payload: { password?: string; role?: string; isActive?: boolean } = {};
+
+			if (editPassword.trim()) {
+				payload.password = editPassword.trim();
+			}
+			if (editRole !== editingUser.role) {
+				payload.role = editRole;
+			}
+			if (editActive !== editingUser.isActive) {
+				payload.isActive = editActive;
+			}
+
+			const res = await fetch(`/api/auth/users/${editingUser.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			});
+
+			if (!res.ok) {
+				const error = await res.json().catch(() => ({ error: 'Failed to update user' }));
+				await modal.error(error.error || 'Failed to update user');
+			} else {
+				cancelEdit();
+				await invalidateAll();
+			}
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function toggleActive(user: User) {
+		try {
+			const res = await fetch(`/api/auth/users/${user.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ isActive: !user.isActive })
+			});
+
+			if (!res.ok) {
+				const error = await res.json().catch(() => ({ error: 'Failed to update user' }));
+				await modal.error(error.error || 'Failed to update user');
+			} else {
+				await invalidateAll();
+			}
+		} catch (err) {
+			await modal.error('Failed to update user');
+		}
+	}
+
+	async function deleteUser(user: User) {
+		const confirmed = await modal.confirm(
+			`Are you sure you want to delete user "${user.username}"? This action cannot be undone.`,
+			'Delete User'
+		);
+		if (!confirmed) return;
+
+		deleting = user.id;
+		try {
+			const res = await fetch(`/api/auth/users/${user.id}`, {
+				method: 'DELETE'
+			});
+
+			if (!res.ok) {
+				const error = await res.json().catch(() => ({ error: 'Failed to delete user' }));
+				await modal.error(error.error || 'Failed to delete user');
+			} else {
+				await invalidateAll();
+			}
+		} finally {
+			deleting = null;
+		}
+	}
+
+	function formatDate(dateStr: string): string {
+		return new Date(dateStr).toLocaleDateString('en-US', {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric'
+		});
+	}
 </script>
 
 <div class="page-header">
 	<div>
-		<h1>Access Control</h1>
-		<p class="subtitle">Manage application users and view host accounts.</p>
+		<h1>User Management</h1>
+		<p class="subtitle">Manage application users and access control</p>
 	</div>
 </div>
 
-<div class="access-grid">
-	<section class="panel">
-		<h2>Application Users</h2>
+<div class="users-layout">
+	<section class="panel create-panel">
+		<h2>Create New User</h2>
 		<form
 			class="create-form"
 			onsubmit={(event) => {
@@ -57,15 +173,15 @@
 			}}
 		>
 			<label>
-				Username
-				<input type="text" bind:value={username} placeholder="new-user" />
+				<span class="label-text">Username</span>
+				<input type="text" bind:value={username} placeholder="Enter username" />
 			</label>
 			<label>
-				Password
-				<input type="password" bind:value={password} placeholder="password" />
+				<span class="label-text">Password</span>
+				<input type="password" bind:value={password} placeholder="Enter password" />
 			</label>
 			<label>
-				Role
+				<span class="label-text">Role</span>
 				<select bind:value={role}>
 					<option value="user">User</option>
 					<option value="admin">Admin</option>
@@ -78,64 +194,115 @@
 				<p class="error">{formError}</p>
 			{/if}
 		</form>
+	</section>
 
+	<section class="panel users-panel">
+		<h2>Users</h2>
 		{#if data.users.error}
-			<p class="error">{data.users.error}</p>
+			<div class="error-box">
+				<p>{data.users.error}</p>
+			</div>
 		{:else if data.users.data && data.users.data.length > 0}
-			<div class="list">
-				{#each data.users.data as user}
-					<div class="list-item">
-						<div>
-							<div class="list-title">{user.username}</div>
-							<div class="list-meta">{user.role} · {user.isActive ? 'active' : 'disabled'}</div>
-						</div>
-						<div class="list-meta">created {new Date(user.createdAt).toLocaleDateString()}</div>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<p class="empty">No users found.</p>
-		{/if}
-	</section>
+			<div class="users-list">
+				{#each data.users.data as user (user.id)}
+					<div class="user-card" class:inactive={!user.isActive}>
+						{#if editingUser?.id === user.id}
+							<div class="user-edit-form">
+								<div class="edit-header">
+									<span class="username">{user.username}</span>
+									<span class="edit-badge">Editing</span>
+								</div>
 
-	<section class="panel">
-		<h2>Host Users</h2>
-		{#if data.hostUsers.error}
-			<p class="error">{data.hostUsers.error}</p>
-		{:else if data.hostUsers.data && data.hostUsers.data.length > 0}
-			<div class="list">
-				{#each data.hostUsers.data as user}
-					<div class="list-item">
-						<div>
-							<div class="list-title">{user.username}</div>
-							<div class="list-meta">UID {user.uid} · GID {user.gid}</div>
-						</div>
-						<div class="list-meta">{user.home}</div>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<p class="empty">No host users detected.</p>
-		{/if}
-	</section>
+								<label>
+									<span class="label-text">New Password</span>
+									<input
+										type="password"
+										bind:value={editPassword}
+										placeholder="Leave blank to keep current"
+									/>
+								</label>
 
-	<section class="panel">
-		<h2>Host Groups</h2>
-		{#if data.hostGroups.error}
-			<p class="error">{data.hostGroups.error}</p>
-		{:else if data.hostGroups.data && data.hostGroups.data.length > 0}
-			<div class="list">
-				{#each data.hostGroups.data as group}
-					<div class="list-item">
-						<div class="list-title">{group.groupName}</div>
-						<div class="list-meta">GID {group.gid}</div>
+								<label>
+									<span class="label-text">Role</span>
+									<select bind:value={editRole}>
+										<option value="user">User</option>
+										<option value="admin">Admin</option>
+									</select>
+								</label>
+
+								<label class="checkbox-label">
+									<input type="checkbox" bind:checked={editActive} />
+									<span>Active</span>
+								</label>
+
+								<div class="edit-actions">
+									<button class="btn-primary" onclick={saveEdit} disabled={saving}>
+										{saving ? 'Saving...' : 'Save'}
+									</button>
+									<button class="btn-secondary" onclick={cancelEdit} disabled={saving}>
+										Cancel
+									</button>
+								</div>
+							</div>
+						{:else}
+							<div class="user-info">
+								<div class="user-main">
+									<span class="username">{user.username}</span>
+									<span class="role-badge" class:admin={user.role === 'admin'}>
+										{user.role}
+									</span>
+									{#if !user.isActive}
+										<span class="status-badge inactive">Disabled</span>
+									{/if}
+								</div>
+								<div class="user-meta">
+									Created {formatDate(user.createdAt)}
+								</div>
+							</div>
+							<div class="user-actions">
+								<button
+									class="btn-icon"
+									title={user.isActive ? 'Disable user' : 'Enable user'}
+									onclick={() => toggleActive(user)}
+								>
+									{user.isActive ? '🔒' : '🔓'}
+								</button>
+								<button
+									class="btn-icon"
+									title="Edit user"
+									onclick={() => startEdit(user)}
+								>
+									✏️
+								</button>
+								<button
+									class="btn-icon danger"
+									title="Delete user"
+									onclick={() => deleteUser(user)}
+									disabled={deleting === user.id}
+								>
+									{deleting === user.id ? '⏳' : '🗑️'}
+								</button>
+							</div>
+						{/if}
 					</div>
 				{/each}
 			</div>
 		{:else}
-			<p class="empty">No host groups detected.</p>
+			<div class="empty-state">
+				<p>No users found. Create your first user above.</p>
+			</div>
 		{/if}
 	</section>
+</div>
+
+<div class="info-section">
+	<div class="info-card">
+		<h3>Role Permissions</h3>
+		<ul>
+			<li><strong>Admin:</strong> Full access to all features including user management, settings, and admin shell</li>
+			<li><strong>User:</strong> Can manage servers, view profiles, and access basic features</li>
+		</ul>
+	</div>
 </div>
 
 <style>
@@ -143,7 +310,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 24px;
+		margin-bottom: 32px;
 	}
 
 	h1 {
@@ -158,37 +325,43 @@
 		font-size: 15px;
 	}
 
-	.access-grid {
+	.users-layout {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-		gap: 20px;
+		grid-template-columns: 320px 1fr;
+		gap: 24px;
+		margin-bottom: 32px;
 	}
 
 	.panel {
-		background: #1a1e2f;
+		background: linear-gradient(135deg, #1a1e2f 0%, #141827 100%);
 		border-radius: 16px;
-		padding: 20px;
+		padding: 24px;
 		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
-		border: 1px solid rgba(106, 176, 76, 0.12);
+		border: 1px solid #2a2f47;
 	}
 
 	.panel h2 {
-		margin: 0 0 16px;
+		margin: 0 0 20px;
 		font-size: 18px;
+		color: #eef0f8;
 	}
 
 	.create-form {
-		display: grid;
-		gap: 12px;
-		margin-bottom: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
 	}
 
 	label {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+	}
+
+	.label-text {
 		font-size: 13px;
-		color: #aab2d3;
+		color: #9aa2c5;
+		font-weight: 500;
 	}
 
 	input,
@@ -200,6 +373,13 @@
 		color: #eef0f8;
 		font-family: inherit;
 		font-size: 14px;
+		transition: border-color 0.2s;
+	}
+
+	input:focus,
+	select:focus {
+		outline: none;
+		border-color: rgba(106, 176, 76, 0.5);
 	}
 
 	.btn-primary {
@@ -211,6 +391,11 @@
 		font-size: 14px;
 		font-weight: 600;
 		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: var(--mc-grass-dark);
 	}
 
 	.btn-primary:disabled {
@@ -218,38 +403,232 @@
 		cursor: not-allowed;
 	}
 
-	.list {
-		display: grid;
+	.btn-secondary {
+		background: #2a2f47;
+		color: #eef0f8;
+		border: none;
+		border-radius: 8px;
+		padding: 12px 20px;
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: #3a3f5a;
+	}
+
+	.users-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.user-card {
+		background: rgba(20, 24, 39, 0.6);
+		border-radius: 12px;
+		padding: 16px;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 16px;
+		border: 1px solid #2a2f47;
+		transition: all 0.2s;
+	}
+
+	.user-card:hover {
+		border-color: rgba(106, 176, 76, 0.3);
+	}
+
+	.user-card.inactive {
+		opacity: 0.6;
+	}
+
+	.user-info {
+		flex: 1;
+	}
+
+	.user-main {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 4px;
+	}
+
+	.username {
+		font-weight: 600;
+		color: #eef0f8;
+		font-size: 15px;
+	}
+
+	.role-badge {
+		display: inline-block;
+		padding: 3px 10px;
+		border-radius: 20px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		background: rgba(88, 101, 242, 0.15);
+		color: #9aa2c5;
+		border: 1px solid rgba(88, 101, 242, 0.3);
+	}
+
+	.role-badge.admin {
+		background: rgba(106, 176, 76, 0.15);
+		color: #b7f5a2;
+		border-color: rgba(106, 176, 76, 0.3);
+	}
+
+	.status-badge {
+		display: inline-block;
+		padding: 3px 10px;
+		border-radius: 20px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+
+	.status-badge.inactive {
+		background: rgba(255, 92, 92, 0.15);
+		color: #ff9f9f;
+		border: 1px solid rgba(255, 92, 92, 0.3);
+	}
+
+	.user-meta {
+		font-size: 12px;
+		color: #7c87b2;
+	}
+
+	.user-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.btn-icon {
+		background: rgba(255, 255, 255, 0.05);
+		border: none;
+		border-radius: 8px;
+		padding: 8px 10px;
+		font-size: 16px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.btn-icon:hover:not(:disabled) {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.btn-icon.danger:hover:not(:disabled) {
+		background: rgba(255, 92, 92, 0.2);
+	}
+
+	.btn-icon:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.user-edit-form {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.edit-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.edit-badge {
+		background: rgba(88, 101, 242, 0.2);
+		color: #a5b4fc;
+		padding: 4px 10px;
+		border-radius: 6px;
+		font-size: 12px;
+		font-weight: 500;
+	}
+
+	.checkbox-label {
+		flex-direction: row !important;
+		align-items: center;
 		gap: 10px;
 	}
 
-	.list-item {
-		background: #141827;
-		border-radius: 12px;
-		padding: 12px;
-		display: flex;
-		justify-content: space-between;
-		gap: 12px;
-		border: 1px solid rgba(42, 47, 71, 0.8);
+	.checkbox-label input[type="checkbox"] {
+		width: 18px;
+		height: 18px;
+		cursor: pointer;
 	}
 
-	.list-title {
-		font-weight: 600;
+	.checkbox-label span {
+		font-size: 14px;
 		color: #eef0f8;
 	}
 
-	.list-meta {
-		font-size: 12px;
-		color: #9aa2c5;
+	.edit-actions {
+		display: flex;
+		gap: 10px;
+		margin-top: 8px;
 	}
 
 	.error {
 		color: #ff9f9f;
 		font-size: 13px;
+		margin: 0;
 	}
 
-	.empty {
+	.error-box {
+		background: rgba(255, 92, 92, 0.1);
+		border: 1px solid rgba(255, 92, 92, 0.3);
+		border-radius: 10px;
+		padding: 16px;
+	}
+
+	.error-box p {
+		margin: 0;
+		color: #ff9f9f;
+	}
+
+	.empty-state {
+		text-align: center;
+		padding: 40px 20px;
+		color: #7c87b2;
+	}
+
+	.info-section {
+		margin-top: 24px;
+	}
+
+	.info-card {
+		background: rgba(88, 101, 242, 0.08);
+		border: 1px solid rgba(88, 101, 242, 0.2);
+		border-radius: 12px;
+		padding: 20px 24px;
+	}
+
+	.info-card h3 {
+		margin: 0 0 12px;
+		font-size: 16px;
+		color: #a5b4fc;
+	}
+
+	.info-card ul {
+		margin: 0;
+		padding-left: 20px;
 		color: #9aa2c5;
-		font-size: 13px;
+		font-size: 14px;
+		line-height: 1.8;
+	}
+
+	.info-card strong {
+		color: #c4cff5;
+	}
+
+	@media (max-width: 900px) {
+		.users-layout {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

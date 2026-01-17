@@ -173,6 +173,86 @@ namespace MineOS.Infrastructure.Migrations
                     b.ToTable("Hosts");
                 });
 
+            modelBuilder.Entity("MineOS.Domain.Entities.InstalledModRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("CurseForgeProjectId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("InstalledAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ModpackId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ServerName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ModpackId");
+
+                    b.HasIndex("ServerName", "FileName")
+                        .IsUnique();
+
+                    b.ToTable("InstalledModRecords");
+                });
+
+            modelBuilder.Entity("MineOS.Domain.Entities.InstalledModpack", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CurseForgeProjectId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("InstalledAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LogoUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ModCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServerName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Version")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServerName", "CurseForgeProjectId")
+                        .IsUnique();
+
+                    b.ToTable("InstalledModpacks");
+                });
+
             modelBuilder.Entity("MineOS.Domain.Entities.JobRecord", b =>
                 {
                     b.Property<string>("JobId")
@@ -279,8 +359,8 @@ namespace MineOS.Infrastructure.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("Timestamp")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("Timestamp")
+                        .HasColumnType("INTEGER");
 
                     b.Property<double?>("Tps")
                         .HasColumnType("REAL");
@@ -543,6 +623,81 @@ namespace MineOS.Infrastructure.Migrations
                     b.ToTable("ServerTemplates");
                 });
 
+            modelBuilder.Entity("MineOS.Domain.Entities.SystemNotification", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("DismissedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsRead")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServerName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("ServerName", "CreatedAt");
+
+                    b.ToTable("SystemNotifications");
+                });
+
+            modelBuilder.Entity("MineOS.Domain.Entities.SystemSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsSecret")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Key")
+                        .IsUnique();
+
+                    b.ToTable("SystemSettings");
+                });
+
             modelBuilder.Entity("MineOS.Domain.Entities.User", b =>
                 {
                     b.Property<int>("Id")
@@ -684,6 +839,16 @@ namespace MineOS.Infrastructure.Migrations
                     b.ToTable("Worlds");
                 });
 
+            modelBuilder.Entity("MineOS.Domain.Entities.InstalledModRecord", b =>
+                {
+                    b.HasOne("MineOS.Domain.Entities.InstalledModpack", "Modpack")
+                        .WithMany("Mods")
+                        .HasForeignKey("ModpackId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Modpack");
+                });
+
             modelBuilder.Entity("MineOS.Domain.Entities.PlayerBan", b =>
                 {
                     b.HasOne("MineOS.Domain.Entities.Player", "Player")
@@ -693,6 +858,11 @@ namespace MineOS.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Player");
+                });
+
+            modelBuilder.Entity("MineOS.Domain.Entities.InstalledModpack", b =>
+                {
+                    b.Navigation("Mods");
                 });
 #pragma warning restore 612, 618
         }

@@ -66,6 +66,12 @@ export async function getServer(
 	return apiFetch(fetcher, `/api/servers/${name}`);
 }
 
+export async function getAllServers(
+	fetcher: Fetcher
+): Promise<ApiResult<import('./types').ServerDetail[]>> {
+	return apiFetch(fetcher, '/api/servers/list');
+}
+
 export async function createServer(
 	fetcher: Fetcher,
 	request: import('./types').CreateServerRequest
@@ -262,4 +268,253 @@ export async function deleteWorld(
 		const message = err instanceof Error ? err.message : 'Unknown error';
 		return { data: null, error: message };
 	}
+}
+
+// Player Management
+export async function getServerPlayers(
+	fetcher: Fetcher,
+	serverName: string
+): Promise<ApiResult<import('./types').PlayerSummary[]>> {
+	const result = await apiFetch<{ data: import('./types').PlayerSummary[] }>(
+		fetcher,
+		`/api/servers/${serverName}/players`
+	);
+	if (result.error) {
+		return { data: null, error: result.error };
+	}
+	return { data: result.data?.data ?? null, error: null };
+}
+
+export async function whitelistPlayer(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string,
+	name?: string
+): Promise<ApiResult<void>> {
+	try {
+		const res = await fetcher(`/api/servers/${serverName}/players/${uuid}/whitelist`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: name ?? null })
+		});
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			const errorMsg = errorData.error || `Request failed with ${res.status}`;
+			return { data: null, error: errorMsg };
+		}
+		return { data: undefined, error: null };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return { data: null, error: message };
+	}
+}
+
+export async function removeWhitelist(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string
+): Promise<ApiResult<void>> {
+	try {
+		const res = await fetcher(`/api/servers/${serverName}/players/${uuid}/whitelist`, {
+			method: 'DELETE'
+		});
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			const errorMsg = errorData.error || `Request failed with ${res.status}`;
+			return { data: null, error: errorMsg };
+		}
+		return { data: undefined, error: null };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return { data: null, error: message };
+	}
+}
+
+export async function opPlayer(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string,
+	payload: { name?: string; level?: number; bypassesPlayerLimit?: boolean }
+): Promise<ApiResult<void>> {
+	try {
+		const res = await fetcher(`/api/servers/${serverName}/players/${uuid}/op`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+		});
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			const errorMsg = errorData.error || `Request failed with ${res.status}`;
+			return { data: null, error: errorMsg };
+		}
+		return { data: undefined, error: null };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return { data: null, error: message };
+	}
+}
+
+export async function banPlayer(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string,
+	payload: { name?: string; reason?: string; bannedBy?: string; expiresAt?: string | null }
+): Promise<ApiResult<void>> {
+	try {
+		const res = await fetcher(`/api/servers/${serverName}/players/${uuid}/ban`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+		});
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			const errorMsg = errorData.error || `Request failed with ${res.status}`;
+			return { data: null, error: errorMsg };
+		}
+		return { data: undefined, error: null };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return { data: null, error: message };
+	}
+}
+
+export async function getPlayerStats(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string
+): Promise<ApiResult<import('./types').PlayerStats>> {
+	return apiFetch(fetcher, `/api/servers/${serverName}/players/${uuid}/stats`);
+}
+
+export async function deopPlayer(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string
+): Promise<ApiResult<void>> {
+	try {
+		const res = await fetcher(`/api/servers/${serverName}/players/${uuid}/op`, {
+			method: 'DELETE'
+		});
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			const errorMsg = errorData.error || `Request failed with ${res.status}`;
+			return { data: null, error: errorMsg };
+		}
+		return { data: undefined, error: null };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return { data: null, error: message };
+	}
+}
+
+export async function unbanPlayer(
+	fetcher: Fetcher,
+	serverName: string,
+	uuid: string
+): Promise<ApiResult<void>> {
+	try {
+		const res = await fetcher(`/api/servers/${serverName}/players/${uuid}/ban`, {
+			method: 'DELETE'
+		});
+		if (!res.ok) {
+			const errorData = await res.json().catch(() => ({}));
+			const errorMsg = errorData.error || `Request failed with ${res.status}`;
+			return { data: null, error: errorMsg };
+		}
+		return { data: undefined, error: null };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return { data: null, error: message };
+	}
+}
+
+// Mojang API
+export async function lookupMojangPlayer(
+	fetcher: Fetcher,
+	username: string
+): Promise<ApiResult<import('./types').MojangProfile>> {
+	const result = await apiFetch<{ data: import('./types').MojangProfile }>(
+		fetcher,
+		`/api/mojang/lookup/${encodeURIComponent(username)}`
+	);
+	if (result.error) {
+		return { data: null, error: result.error };
+	}
+	return { data: result.data?.data ?? null, error: null };
+}
+
+// Performance Monitoring
+export async function getPerformanceRealtime(
+	fetcher: Fetcher,
+	serverName: string
+): Promise<ApiResult<import('./types').PerformanceSample>> {
+	return apiFetch(fetcher, `/api/servers/${serverName}/performance/realtime`);
+}
+
+export async function getPerformanceHistory(
+	fetcher: Fetcher,
+	serverName: string,
+	minutes = 60
+): Promise<ApiResult<import('./types').PerformanceSample[]>> {
+	const params = new URLSearchParams({ minutes: String(minutes) });
+	return apiFetch(fetcher, `/api/servers/${serverName}/performance/history?${params.toString()}`);
+}
+
+// Forge API
+export async function getForgeVersions(
+	fetcher: Fetcher
+): Promise<ApiResult<import('./types').ForgeVersion[]>> {
+	const result = await apiFetch<{ data: import('./types').ForgeVersion[] }>(
+		fetcher,
+		'/api/forge/versions'
+	);
+	if (result.error) {
+		return { data: null, error: result.error };
+	}
+	return { data: result.data?.data ?? null, error: null };
+}
+
+export async function getForgeVersionsForMinecraft(
+	fetcher: Fetcher,
+	minecraftVersion: string
+): Promise<ApiResult<import('./types').ForgeVersion[]>> {
+	const result = await apiFetch<{ data: import('./types').ForgeVersion[] }>(
+		fetcher,
+		`/api/forge/versions/${encodeURIComponent(minecraftVersion)}`
+	);
+	if (result.error) {
+		return { data: null, error: result.error };
+	}
+	return { data: result.data?.data ?? null, error: null };
+}
+
+export async function installForge(
+	fetcher: Fetcher,
+	minecraftVersion: string,
+	forgeVersion: string,
+	serverName: string
+): Promise<ApiResult<import('./types').ForgeInstallResult>> {
+	const result = await apiFetch<{ data: import('./types').ForgeInstallResult }>(fetcher, '/api/forge/install', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ minecraftVersion, forgeVersion, serverName })
+	});
+	if (result.error) {
+		return { data: null, error: result.error };
+	}
+	return { data: result.data?.data ?? null, error: null };
+}
+
+export async function getForgeInstallStatus(
+	fetcher: Fetcher,
+	installId: string
+): Promise<ApiResult<import('./types').ForgeInstallStatus>> {
+	const result = await apiFetch<{ data: import('./types').ForgeInstallStatus }>(
+		fetcher,
+		`/api/forge/install/${encodeURIComponent(installId)}`
+	);
+	if (result.error) {
+		return { data: null, error: result.error };
+	}
+	return { data: result.data?.data ?? null, error: null };
 }

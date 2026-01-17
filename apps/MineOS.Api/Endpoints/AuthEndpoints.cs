@@ -73,6 +73,27 @@ public static class AuthEndpoints
                 return Results.NotFound(new { error = ex.Message });
             }
         }).RequireAuthorization(new AuthorizeAttribute { Roles = "admin" });
+
+        auth.MapDelete("/users/{id:int}", async (
+            int id,
+            IUserService userService,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await userService.DeleteUserAsync(id, cancellationToken);
+                return Results.Ok(new { message = "User deleted" });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        }).RequireAuthorization(new AuthorizeAttribute { Roles = "admin" });
+
         return api;
     }
 }

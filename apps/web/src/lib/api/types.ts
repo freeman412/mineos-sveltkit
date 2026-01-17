@@ -181,3 +181,118 @@ export type WorldInfo = {
 	fileCount: number;
 	directoryCount: number;
 };
+
+// Performance Monitoring
+export type PerformanceSample = {
+	serverName: string;
+	timestamp: string;
+	isRunning: boolean;
+	cpuPercent: number;
+	ramUsedMb: number;
+	ramTotalMb: number;
+	tps: number | null;
+	playerCount: number;
+};
+
+// Player Management
+export type PlayerSummary = {
+	uuid: string;
+	name: string;
+	whitelisted: boolean;
+	isOp: boolean;
+	opLevel: number | null;
+	opBypassPlayerLimit: boolean | null;
+	banned: boolean;
+	banReason: string | null;
+	banExpiresAt: string | null;
+	lastSeen: string | null;
+	playTimeSeconds: number | null;
+};
+
+export type PlayerStats = {
+	uuid: string;
+	rawJson: string;
+	lastModified: string | null;
+};
+
+// Mojang API types
+export type MojangProfile = {
+	uuid: string;
+	name: string;
+	avatarUrl: string;
+};
+
+// Forge types
+export type ForgeVersion = {
+	minecraftVersion: string;
+	forgeVersion: string;
+	fullVersion: string;
+	isRecommended: boolean;
+	isLatest: boolean;
+	releaseDate: string | null;
+};
+
+export type ForgeInstallResult = {
+	installId: string;
+	status: string;
+	error: string | null;
+};
+
+export type ForgeInstallStatus = {
+	installId: string;
+	minecraftVersion: string;
+	forgeVersion: string;
+	serverName: string;
+	status: string;
+	progress: number;
+	currentStep: string | null;
+	error: string | null;
+	output: string | null;
+	startedAt: string;
+	completedAt: string | null;
+};
+
+// Modpack types
+export type ModpackInstallProgress = {
+	jobId: string;
+	serverName: string;
+	status: string;
+	percentage: number;
+	currentStep: string | null;
+	currentModIndex: number;
+	totalMods: number;
+	currentModName: string | null;
+	outputLines: string[];
+	error: string | null;
+};
+
+export type InstalledModpack = {
+	id: number;
+	name: string;
+	version: string | null;
+	logoUrl: string | null;
+	modCount: number;
+	installedAt: string;
+};
+
+export type InstalledModWithModpack = {
+	fileName: string;
+	sizeBytes: number;
+	modifiedAt: string;
+	isDisabled: boolean;
+	modpackId: number | null;
+	modpackName: string | null;
+	curseForgeProjectId: number | null;
+};
+
+// Notification types
+export type SystemNotification = {
+	id: number;
+	type: 'info' | 'warning' | 'error' | 'success';
+	title: string;
+	message: string;
+	createdAt: string;
+	dismissedAt: string | null;
+	isRead: boolean;
+	serverName: string | null;
+};

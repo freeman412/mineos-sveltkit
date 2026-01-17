@@ -1,8 +1,6 @@
 import { redirect, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 
-const API_BASE_URL = 'http://127.0.0.1:5078/api/v1';
-
 export const load: PageServerLoad = async ({ cookies }) => {
 	const token = cookies.get('auth_token');
 	if (token) {
@@ -21,7 +19,7 @@ export const actions = {
 		}
 
 		try {
-			const response = await fetch(`${API_BASE_URL}/auth/login`, {
+			const response = await fetch('/api/auth/login', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'

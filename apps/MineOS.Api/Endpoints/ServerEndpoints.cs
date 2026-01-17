@@ -8,9 +8,7 @@ public static class ServerEndpoints
 {
     public static RouteGroupBuilder MapServerEndpoints(this RouteGroupBuilder api)
     {
-        var servers = api.MapGroup("/servers")
-            .RequireAuthorization()
-            .WithMetadata(new Middleware.SkipApiKeyAttribute());
+        var servers = api.MapGroup("/servers");
 
         // Server CRUD
         servers.MapPost("/", async (
@@ -30,6 +28,14 @@ public static class ServerEndpoints
             {
                 return Results.Conflict(new { error = ex.Message });
             }
+        });
+
+        servers.MapGet("/list", async (
+            IServerService serverService,
+            CancellationToken cancellationToken) =>
+        {
+            var serverList = await serverService.ListServersAsync(cancellationToken);
+            return Results.Ok(serverList);
         });
 
         servers.MapGet("/{name}", async (

@@ -2,6 +2,8 @@
 	import { page } from '$app/stores';
 	import { goto, invalidateAll } from '$app/navigation';
 	import type { LayoutData } from './$types';
+	import TopBar from '$lib/components/TopBar.svelte';
+	import FeedbackButton from '$lib/components/FeedbackButton.svelte';
 
 	let { data, children }: { data: LayoutData; children: any } = $props();
 
@@ -14,14 +16,15 @@
 
 	const navItems = [
 		{ href: '/dashboard', label: 'Dashboard', icon: '[D]' },
-		{ href: '/search', label: 'Search', icon: '[F]' },
 		{ href: '/servers', label: 'Servers', icon: '[S]' },
 		{ href: '/profiles', label: 'Profiles', icon: '[P]' },
 		{ href: '/profiles/buildtools', label: 'BuildTools', icon: '[B]' },
 		{ href: '/import', label: 'Import', icon: '[I]' },
 		{ href: '/curseforge', label: 'CurseForge', icon: '[C]' },
-		{ href: '/admin/access', label: 'Access', icon: '[A]', requiresAdmin: true },
-		{ href: '/admin/shell', label: 'Admin Shell', icon: '[T]', requiresAdmin: true }
+		{ href: '/admin/access', label: 'Users', icon: '[U]', requiresAdmin: true },
+		{ href: '/admin/settings', label: 'Settings', icon: '[G]', requiresAdmin: true },
+		{ href: '/admin/shell', label: 'Admin Shell', icon: '[T]', requiresAdmin: true },
+		{ href: '/about', label: 'About', icon: '[?]' }
 	];
 
 	function isActive(href: string) {
@@ -52,7 +55,6 @@
 					<p class="logo-tagline">Minecraft Control</p>
 				</div>
 			</div>
-			<p class="user-info">{data.user?.username || 'Unknown'}</p>
 		</div>
 
 		<ul class="nav-list">
@@ -83,9 +85,14 @@
 	</div>
 	</nav>
 
-	<main class="main-content">
-		{@render children()}
-	</main>
+	<div class="main-wrapper">
+		<TopBar user={data.user} servers={data.servers} profiles={data.profiles} />
+		<main class="main-content">
+			{@render children()}
+		</main>
+	</div>
+
+	<FeedbackButton />
 </div>
 
 <style>
@@ -109,6 +116,57 @@
 		--mc-panel: #1a1e2f;
 		--mc-panel-dark: #141827;
 		--mc-text-muted: #9aa2c5;
+	}
+
+	:global(select) {
+		background: #141827;
+		border: 1px solid #2a2f47;
+		border-radius: 8px;
+		padding: 10px 12px;
+		color: #eef0f8;
+		font-family: inherit;
+		font-size: 14px;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	:global(select:focus) {
+		outline: none;
+		border-color: rgba(106, 176, 76, 0.5);
+		box-shadow: 0 0 0 2px rgba(106, 176, 76, 0.1);
+	}
+
+	:global(select:disabled) {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	:global(input[type='text']),
+	:global(input[type='number']),
+	:global(input[type='email']),
+	:global(input[type='password']),
+	:global(textarea) {
+		background: #141827;
+		border: 1px solid #2a2f47;
+		border-radius: 8px;
+		padding: 10px 12px;
+		color: #eef0f8;
+		font-family: inherit;
+		font-size: 14px;
+		transition: all 0.2s;
+	}
+
+	:global(input:focus),
+	:global(textarea:focus) {
+		outline: none;
+		border-color: rgba(106, 176, 76, 0.5);
+		box-shadow: 0 0 0 2px rgba(106, 176, 76, 0.1);
+	}
+
+	:global(input:disabled),
+	:global(textarea:disabled) {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.app-container {
@@ -137,7 +195,6 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		margin-bottom: 12px;
 	}
 
 	.logo-icon {
@@ -159,11 +216,6 @@
 		color: #7c87b2;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
-	}
-	.user-info {
-		margin: 0;
-		font-size: 13px;
-		color: #8890b1;
 	}
 
 	.nav-list {
@@ -257,10 +309,17 @@
 		background: rgba(246, 178, 107, 0.12);
 	}
 
-	.main-content {
+	.main-wrapper {
 		flex: 1;
 		margin-left: 260px;
-		padding: 48px 32px;
+		display: flex;
+		flex-direction: column;
+		min-height: 100vh;
+	}
+
+	.main-content {
+		flex: 1;
+		padding: 32px;
 		max-width: 1400px;
 		width: 100%;
 	}
@@ -270,9 +329,18 @@
 			width: 200px;
 		}
 
-		.main-content {
+		.main-wrapper {
 			margin-left: 200px;
-			padding: 24px 16px;
+		}
+
+		.main-content {
+			padding: 20px;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.main-content {
+			padding: 16px;
 		}
 	}
 </style>

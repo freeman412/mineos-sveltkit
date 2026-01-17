@@ -96,6 +96,29 @@ public sealed class UserService : IUserService
         return ToDto(user);
     }
 
+    public async Task DeleteUserAsync(int id, CancellationToken cancellationToken)
+    {
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+        if (user == null)
+        {
+            throw new ArgumentException("User not found");
+        }
+
+        // Prevent deleting the last admin
+        if (user.Role == "admin")
+        {
+            var adminCount = await _db.Users.CountAsync(u => u.Role == "admin" && u.IsActive, cancellationToken);
+            if (adminCount <= 1)
+            {
+                throw new InvalidOperationException("Cannot delete the last admin user");
+            }
+        }
+
+        _db.Users.Remove(user);
+        await _db.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Deleted user {Username}", user.Username);
+    }
+
     private static UserDto ToDto(User user)
     {
         return new UserDto(

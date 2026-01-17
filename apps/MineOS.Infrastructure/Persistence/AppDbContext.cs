@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MineOS.Domain.Entities;
 
 namespace MineOS.Infrastructure.Persistence;
@@ -42,6 +43,16 @@ public sealed class AppDbContext : DbContext
 
     // API & Security
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+
+    // Mod Management
+    public DbSet<InstalledModpack> InstalledModpacks => Set<InstalledModpack>();
+    public DbSet<InstalledModRecord> InstalledModRecords => Set<InstalledModRecord>();
+
+    // Notifications
+    public DbSet<SystemNotification> SystemNotifications => Set<SystemNotification>();
+
+    // Settings
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -108,6 +119,12 @@ public sealed class AppDbContext : DbContext
             entity.HasKey(x => x.Id);
             entity.HasIndex(x => new { x.ServerName, x.Timestamp });
             entity.Property(x => x.ServerName).HasMaxLength(256);
+            var timestampConverter = new ValueConverter<DateTimeOffset, long>(
+                value => value.ToUnixTimeSeconds(),
+                value => DateTimeOffset.FromUnixTimeSeconds(value));
+            entity.Property(x => x.Timestamp)
+                .HasConversion(timestampConverter)
+                .HasColumnType("INTEGER");
         });
 
         modelBuilder.Entity<Alert>(entity =>
@@ -202,6 +219,63 @@ public sealed class AppDbContext : DbContext
             entity.Property(x => x.Name).HasMaxLength(128);
             entity.Property(x => x.Hostname).HasMaxLength(256);
             entity.Property(x => x.Status).HasMaxLength(32);
+        });
+
+        // Mod Management
+        modelBuilder.Entity<InstalledModpack>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.CurseForgeProjectId }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.Name).HasMaxLength(256);
+            entity.Property(x => x.Version).HasMaxLength(64);
+            entity.Property(x => x.LogoUrl).HasMaxLength(512);
+        });
+
+        modelBuilder.Entity<InstalledModRecord>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ServerName, x.FileName }).IsUnique();
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+            entity.Property(x => x.FileName).HasMaxLength(256);
+            entity.Property(x => x.ModName).HasMaxLength(256);
+            entity.HasOne(x => x.Modpack)
+                .WithMany(m => m.Mods)
+                .HasForeignKey(x => x.ModpackId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Notifications
+        modelBuilder.Entity<SystemNotification>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasMaxLength(32);
+            entity.Property(x => x.Title).HasMaxLength(256);
+            entity.Property(x => x.ServerName).HasMaxLength(256);
+
+            // Convert DateTimeOffset to Unix timestamp for SQLite compatibility
+            var timestampConverter = new ValueConverter<DateTimeOffset, long>(
+                value => value.ToUnixTimeSeconds(),
+                value => DateTimeOffset.FromUnixTimeSeconds(value));
+            entity.Property(x => x.CreatedAt)
+                .HasConversion(timestampConverter)
+                .HasColumnType("INTEGER");
+            entity.Property(x => x.DismissedAt)
+                .HasConversion(timestampConverter)
+                .HasColumnType("INTEGER");
+
+            entity.HasIndex(x => x.CreatedAt);
+            entity.HasIndex(x => new { x.ServerName, x.CreatedAt });
+        });
+
+        // Settings
+        modelBuilder.Entity<SystemSetting>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.Key).IsUnique();
+            entity.Property(x => x.Key).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Value).HasMaxLength(1024);
+            entity.Property(x => x.Description).HasMaxLength(512);
         });
     }
 }

@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
 using MineOS.Application.Interfaces;
 
 namespace MineOS.Api.Endpoints;
@@ -8,7 +7,7 @@ public static class WorldEndpoints
 {
     public static IEndpointRouteBuilder MapWorldEndpoints(this IEndpointRouteBuilder api)
     {
-        var worlds = api.MapGroup("/api/servers/{serverName}/worlds")
+        var worlds = api.MapGroup("/servers/{serverName}/worlds")
             .WithTags("Worlds")
             .RequireAuthorization();
 
@@ -18,9 +17,48 @@ public static class WorldEndpoints
             CancellationToken cancellationToken) =>
         {
             var result = await worldService.ListWorldsAsync(serverName, cancellationToken);
-            return Results.Ok(new { data = result });
+            return Results.Ok(result);
         }).WithName("ListWorlds")
           .WithSummary("List all worlds for a server");
+
+        worlds.MapPost("/upload", async (
+            string serverName,
+            IFormFile file,
+            IWorldService worldService,
+            CancellationToken cancellationToken) =>
+        {
+            if (file == null || file.Length == 0)
+            {
+                return Results.BadRequest(new { error = "No file uploaded" });
+            }
+
+            if (!file.ContentType.Equals("application/zip", StringComparison.OrdinalIgnoreCase) &&
+                !file.ContentType.Equals("application/x-zip-compressed", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { error = "File must be a ZIP archive" });
+            }
+
+            try
+            {
+                using var stream = file.OpenReadStream();
+                var worldName = await worldService.UploadNewWorldAsync(serverName, stream, cancellationToken);
+                return Results.Ok(new { message = $"World '{worldName}' uploaded successfully", worldName });
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        }).WithName("UploadNewWorld")
+          .WithSummary("Upload a new world from a ZIP archive")
+          .DisableAntiforgery();
 
         worlds.MapGet("/{worldName}", async (
             string serverName,
@@ -31,7 +69,7 @@ public static class WorldEndpoints
             try
             {
                 var result = await worldService.GetWorldInfoAsync(serverName, worldName, cancellationToken);
-                return Results.Ok(new { data = result });
+                return Results.Ok(result);
             }
             catch (FileNotFoundException ex)
             {
@@ -61,7 +99,7 @@ public static class WorldEndpoints
         worlds.MapPost("/{worldName}/upload", async (
             string serverName,
             string worldName,
-            [FromForm] IFormFile file,
+            IFormFile file,
             IWorldService worldService,
             CancellationToken cancellationToken) =>
         {

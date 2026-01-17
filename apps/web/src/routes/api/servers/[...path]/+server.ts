@@ -1,127 +1,25 @@
-import { PRIVATE_API_BASE_URL, PRIVATE_API_KEY } from '$env/static/private';
 import type { RequestHandler } from './$types';
+import { createProxyHandlers } from '$lib/server/proxyApi';
+import { proxyEventStream } from '$lib/server/streamProxy';
 
-const baseUrl = PRIVATE_API_BASE_URL || 'http://localhost:5078';
-const apiKey = PRIVATE_API_KEY || '';
+const handlers = createProxyHandlers('/api/v1/servers');
 
-export const GET: RequestHandler = async ({ params, url, request, cookies }) => {
-	const token = cookies.get('auth_token');
-	const headers: HeadersInit = {};
-	const contentType = request.headers.get('content-type');
-	if (contentType) {
-		headers['Content-Type'] = contentType;
+export const GET: RequestHandler = (event) => {
+	const accept = event.request.headers.get('accept') ?? '';
+	const path = event.params.path ?? '';
+	const isStream =
+		accept.includes('text/event-stream') ||
+		path.endsWith('/stream') ||
+		path.endsWith('/streaming');
+
+	if (isStream) {
+		return proxyEventStream(event, `/api/v1/servers/${path}`);
 	}
 
-	if (apiKey) {
-		headers['X-Api-Key'] = apiKey;
-	}
-
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-
-	const response = await fetch(`${baseUrl}/api/v1/servers/${params.path}${url.search}`, {
-		method: 'GET',
-		headers
-	});
-
-	return new Response(response.body, {
-		status: response.status,
-		headers: {
-			'Content-Type': response.headers.get('content-type') ?? 'application/json'
-		}
-	});
+	return handlers.GET(event);
 };
 
-export const POST: RequestHandler = async ({ params, url, request, cookies }) => {
-	const token = cookies.get('auth_token');
-	const headers: HeadersInit = {};
-	const contentType = request.headers.get('content-type');
-	if (contentType) {
-		headers['Content-Type'] = contentType;
-	}
-
-	if (apiKey) {
-		headers['X-Api-Key'] = apiKey;
-	}
-
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-
-	const body = await request.arrayBuffer();
-
-	const response = await fetch(`${baseUrl}/api/v1/servers/${params.path}${url.search}`, {
-		method: 'POST',
-		headers,
-		body
-	});
-
-	return new Response(response.body, {
-		status: response.status,
-		headers: {
-			'Content-Type': response.headers.get('content-type') ?? 'application/json'
-		}
-	});
-};
-
-export const PUT: RequestHandler = async ({ params, url, request, cookies }) => {
-	const token = cookies.get('auth_token');
-	const headers: HeadersInit = {};
-	const contentType = request.headers.get('content-type');
-	if (contentType) {
-		headers['Content-Type'] = contentType;
-	}
-
-	if (apiKey) {
-		headers['X-Api-Key'] = apiKey;
-	}
-
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-
-	const body = await request.arrayBuffer();
-
-	const response = await fetch(`${baseUrl}/api/v1/servers/${params.path}${url.search}`, {
-		method: 'PUT',
-		headers,
-		body
-	});
-
-	return new Response(response.body, {
-		status: response.status,
-		headers: {
-			'Content-Type': response.headers.get('content-type') ?? 'application/json'
-		}
-	});
-};
-
-export const DELETE: RequestHandler = async ({ params, url, request, cookies }) => {
-	const token = cookies.get('auth_token');
-	const headers: HeadersInit = {};
-	const contentType = request.headers.get('content-type');
-	if (contentType) {
-		headers['Content-Type'] = contentType;
-	}
-
-	if (apiKey) {
-		headers['X-Api-Key'] = apiKey;
-	}
-
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-
-	const response = await fetch(`${baseUrl}/api/v1/servers/${params.path}${url.search}`, {
-		method: 'DELETE',
-		headers
-	});
-
-	return new Response(response.body, {
-		status: response.status,
-		headers: {
-			'Content-Type': response.headers.get('content-type') ?? 'application/json'
-		}
-	});
-};
+export const POST = handlers.POST;
+export const PUT = handlers.PUT;
+export const PATCH = handlers.PATCH;
+export const DELETE = handlers.DELETE;

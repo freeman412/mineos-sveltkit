@@ -39,4 +39,15 @@ obj
 *.db-shm
 *.db-wal
 apps/MineOS.Api/data/
+
+# Claude settings
 .claude/settings.local.json
+.claude/settings.json
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+apps/web/.env
+!.env.example
+!apps/web/.env.example

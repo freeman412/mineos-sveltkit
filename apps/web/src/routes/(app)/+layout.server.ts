@@ -1,7 +1,8 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
+import * as api from '$lib/api/client';
 
-export const load: LayoutServerLoad = async ({ cookies }) => {
+export const load: LayoutServerLoad = async ({ cookies, fetch }) => {
 	const token = cookies.get('auth_token');
 	const userJson = cookies.get('auth_user');
 
@@ -19,7 +20,15 @@ export const load: LayoutServerLoad = async ({ cookies }) => {
 		}
 	}
 
+	// Load servers and profiles for search
+	const [servers, profiles] = await Promise.all([
+		api.getAllServers(fetch),
+		api.getHostProfiles(fetch)
+	]);
+
 	return {
-		user
+		user,
+		servers: servers.data ?? [],
+		profiles: profiles.data ?? []
 	};
 };
