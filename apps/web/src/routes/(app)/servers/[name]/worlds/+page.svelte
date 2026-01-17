@@ -8,7 +8,13 @@
 
 	let deleting = $state<string | null>(null);
 	let downloading = $state<string | null>(null);
+	let uploading = $state<string | null>(null);
+	let uploadProgress = $state<number>(0);
 	let confirmDelete: string | null = $state(null);
+	let uploadingNew = $state(false);
+	let uploadNewProgress = $state<number>(0);
+
+	const isServerRunning = $derived(data.server?.status === 'running');
 
 	function formatBytes(bytes: number): string {
 		if (bytes === 0) return '0 B';
@@ -35,6 +41,11 @@
 	}
 
 	async function handleDelete(worldName: string) {
+		if (isServerRunning) {
+			await modal.error('Cannot delete worlds while server is running. Please stop the server first.');
+			return;
+		}
+
 		if (confirmDelete !== worldName) {
 			confirmDelete = worldName;
 			return;
@@ -55,22 +66,206 @@
 			confirmDelete = null;
 		}
 	}
+
+	async function handleUpload(worldName: string) {
+		if (isServerRunning) {
+			await modal.error('Cannot upload worlds while server is running. Please stop the server first.');
+			return;
+		}
+
+		const confirmed = await modal.confirm(
+			`Upload a new world to replace "${worldName}"? This will permanently delete the existing world folder.`,
+			'Replace World'
+		);
+		if (!confirmed) return;
+
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.zip';
+		input.onchange = async (e) => {
+			const file = (e.target as HTMLInputElement).files?.[0];
+			if (!file) return;
+
+			if (!file.name.endsWith('.zip')) {
+				await modal.error('Only ZIP files are supported');
+				return;
+			}
+
+			uploading = worldName;
+			uploadProgress = 0;
+
+			try {
+				const xhr = new XMLHttpRequest();
+				const uploadPromise = new Promise<void>((resolve, reject) => {
+					xhr.upload.addEventListener('progress', (e) => {
+						if (e.lengthComputable) {
+							uploadProgress = Math.round((e.loaded / e.total) * 100);
+						}
+					});
+
+					xhr.addEventListener('load', () => {
+						if (xhr.status >= 200 && xhr.status < 300) {
+							resolve();
+						} else {
+							try {
+								const errorData = JSON.parse(xhr.responseText);
+								reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
+							} catch {
+								reject(new Error(`Upload failed with status ${xhr.status}`));
+							}
+						}
+					});
+
+					xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+					xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+					const formData = new FormData();
+					formData.append('file', file);
+
+					xhr.open('POST', `/api/servers/${data.server.name}/worlds/${worldName}/upload`);
+					xhr.send(formData);
+				});
+
+				await uploadPromise;
+				await invalidateAll();
+			} catch (err) {
+				await modal.error(err instanceof Error ? err.message : 'Failed to upload world');
+			} finally {
+				uploading = null;
+				uploadProgress = 0;
+			}
+		};
+		input.click();
+	}
+
+	async function handleUploadNew() {
+		if (isServerRunning) {
+			await modal.error('Cannot upload worlds while server is running. Please stop the server first.');
+			return;
+		}
+
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.zip';
+		input.onchange = async (e) => {
+			const file = (e.target as HTMLInputElement).files?.[0];
+			if (!file) return;
+
+			if (!file.name.endsWith('.zip')) {
+				await modal.error('Only ZIP files are supported');
+				return;
+			}
+
+			uploadingNew = true;
+			uploadNewProgress = 0;
+
+			try {
+				const xhr = new XMLHttpRequest();
+				const uploadPromise = new Promise<void>((resolve, reject) => {
+					xhr.upload.addEventListener('progress', (e) => {
+						if (e.lengthComputable) {
+							uploadNewProgress = Math.round((e.loaded / e.total) * 100);
+						}
+					});
+
+					xhr.addEventListener('load', () => {
+						if (xhr.status >= 200 && xhr.status < 300) {
+							resolve();
+						} else {
+							try {
+								const errorData = JSON.parse(xhr.responseText);
+								reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
+							} catch {
+								reject(new Error(`Upload failed with status ${xhr.status}`));
+							}
+						}
+					});
+
+					xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+					xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+					const formData = new FormData();
+					formData.append('file', file);
+
+					xhr.open('POST', `/api/servers/${data.server.name}/worlds/upload`);
+					xhr.send(formData);
+				});
+
+				await uploadPromise;
+				await invalidateAll();
+			} catch (err) {
+				await modal.error(err instanceof Error ? err.message : 'Failed to upload world');
+			} finally {
+				uploadingNew = false;
+				uploadNewProgress = 0;
+			}
+		};
+		input.click();
+	}
 </script>
 
 <div class="worlds-page">
 	<header class="page-header">
-		<h2>World Management</h2>
-		<p class="subtitle">Manage your Minecraft world folders</p>
+		<div>
+			<h2>World Management</h2>
+			<p class="subtitle">Manage your Minecraft world folders</p>
+		</div>
+		<button
+			class="btn-primary"
+			onclick={handleUploadNew}
+			disabled={uploadingNew || isServerRunning}
+			title={isServerRunning ? 'Stop server first' : 'Upload world from ZIP'}
+		>
+			{#if uploadingNew}
+				📤 Uploading... {uploadNewProgress}%
+			{:else}
+				📤 Upload World
+			{/if}
+		</button>
 	</header>
 
-	{#if !data.worlds.data || data.worlds.data.length === 0}
+	{#if isServerRunning}
+		<div class="warning-banner">
+			<div class="warning-icon">⚠️</div>
+			<div class="warning-content">
+				<strong>Server is running</strong>
+				<p>Upload and delete operations are disabled while the server is running. Stop the server to modify worlds.</p>
+			</div>
+		</div>
+	{/if}
+
+	{#if data.worlds.error}
+		<div class="empty-state error">
+			<div class="empty-icon">❌</div>
+			<h3>Error Loading Worlds</h3>
+			<p>{data.worlds.error}</p>
+		</div>
+	{:else if !data.worlds.data || data.worlds.data.length === 0}
 		<div class="empty-state">
 			<div class="empty-icon">🌍</div>
 			<h3>No Worlds Found</h3>
 			<p>
-				No world folders detected. Worlds will appear here after the server generates them on first
-				start.
+				No world folders detected. Upload a world ZIP file or start the server to generate new worlds.
 			</p>
+			<button
+				class="btn-primary"
+				onclick={handleUploadNew}
+				disabled={uploadingNew || isServerRunning}
+				title={isServerRunning ? 'Stop server first' : 'Upload world from ZIP'}
+			>
+				{#if uploadingNew}
+					📤 Uploading... {uploadNewProgress}%
+				{:else}
+					📤 Upload World
+				{/if}
+			</button>
+			{#if uploadingNew && uploadNewProgress > 0}
+				<div class="upload-progress-bar">
+					<div class="progress-bar">
+						<div class="progress-fill" style="width: {uploadNewProgress}%"></div>
+					</div>
+				</div>
+			{/if}
 		</div>
 	{:else}
 		<div class="worlds-grid">
@@ -108,23 +303,45 @@
 						<button
 							class="action-btn download"
 							onclick={() => handleDownload(world.name)}
-							disabled={downloading === world.name}
+							disabled={downloading === world.name || uploading === world.name}
 						>
-							{downloading === world.name ? '⏳ Downloading...' : '📥 Download'}
+							{downloading === world.name ? '⏳ Downloading...' : '💾 Backup'}
+						</button>
+
+						<button
+							class="action-btn upload"
+							onclick={() => handleUpload(world.name)}
+							disabled={uploading === world.name || isServerRunning}
+							title={isServerRunning ? 'Stop server first' : 'Replace world from ZIP'}
+						>
+							{#if uploading === world.name}
+								📤 Uploading... {uploadProgress}%
+							{:else}
+								📤 Replace
+							{/if}
 						</button>
 
 						<button
 							class="action-btn delete"
 							onclick={() => handleDelete(world.name)}
-							disabled={deleting === world.name}
+							disabled={deleting === world.name || isServerRunning}
+							title={isServerRunning ? 'Stop server first' : 'Delete world'}
 						>
 							{#if confirmDelete === world.name}
-								{deleting === world.name ? '⏳ Deleting...' : '⚠️ Confirm Delete?'}
+								{deleting === world.name ? '⏳ Deleting...' : '⚠️ Confirm?'}
 							{:else}
 								🗑️ Delete
 							{/if}
 						</button>
 					</div>
+
+					{#if uploading === world.name && uploadProgress > 0}
+						<div class="upload-progress">
+							<div class="progress-bar">
+								<div class="progress-fill" style="width: {uploadProgress}%"></div>
+							</div>
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -132,16 +349,23 @@
 		<div class="info-box">
 			<h4>ℹ️ World Management Tips</h4>
 			<ul>
-				<li><strong>Download:</strong> Creates a ZIP archive of the world folder for backup</li>
+				<li><strong>Upload New:</strong> Upload a world ZIP file to add a new world to the server (auto-detects world name from ZIP structure)</li>
+				<li><strong>Backup:</strong> Downloads a ZIP archive of the world folder for safekeeping</li>
+				<li><strong>Replace:</strong> Upload a ZIP file to replace an existing world (server must be stopped)</li>
 				<li>
 					<strong>Delete:</strong> Permanently removes the world folder (server will regenerate on
 					next start)
 				</li>
+				<li><strong>Warning:</strong> Always stop the server before uploading or deleting worlds</li>
 				<li>
-					<strong>Upload:</strong> Upload functionality coming soon - manually copy worlds to server
-					directory for now
+					<strong>Vanilla Servers:</strong> Use separate world folders named "world", "world_nether", and "world_the_end"
 				</li>
-				<li><strong>Warning:</strong> Always stop the server before deleting or replacing worlds</li>
+				<li>
+					<strong>Paper/Spigot:</strong> Use a single "world" folder containing DIM-1 (Nether) and DIM1 (End) subfolders
+				</li>
+				<li>
+					<strong>World Types:</strong> Overworld (🌍), Nether (🔥), The End (🌌), Custom (📁)
+				</li>
 			</ul>
 		</div>
 	{/if}
@@ -155,6 +379,10 @@
 	}
 
 	.page-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 24px;
 		margin-bottom: 8px;
 	}
 
@@ -165,10 +393,68 @@
 		color: #eef0f8;
 	}
 
+	.btn-primary {
+		background: var(--mc-grass);
+		color: #fff;
+		border: none;
+		border-radius: 8px;
+		padding: 12px 24px;
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-family: inherit;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.btn-primary:hover:not(:disabled) {
+		background: var(--mc-grass-dark);
+	}
+
+	.btn-primary:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.subtitle {
 		margin: 0;
 		color: #9aa2c5;
 		font-size: 14px;
+	}
+
+	.warning-banner {
+		display: flex;
+		align-items: flex-start;
+		gap: 16px;
+		padding: 16px 20px;
+		background: rgba(255, 183, 77, 0.08);
+		border: 1px solid rgba(255, 183, 77, 0.3);
+		border-radius: 12px;
+		margin-bottom: 24px;
+	}
+
+	.warning-icon {
+		font-size: 24px;
+		flex-shrink: 0;
+	}
+
+	.warning-content {
+		flex: 1;
+	}
+
+	.warning-content strong {
+		display: block;
+		color: #ffcf89;
+		font-size: 15px;
+		margin-bottom: 4px;
+	}
+
+	.warning-content p {
+		margin: 0;
+		color: #c9a877;
+		font-size: 14px;
+		line-height: 1.5;
 	}
 
 	.empty-state {
@@ -191,11 +477,16 @@
 	}
 
 	.empty-state p {
-		margin: 0;
+		margin: 0 0 24px;
 		color: #9aa2c5;
 		font-size: 14px;
 		max-width: 500px;
-		margin: 0 auto;
+	}
+
+	.upload-progress-bar {
+		margin-top: 16px;
+		width: 100%;
+		max-width: 400px;
 	}
 
 	.worlds-grid {
@@ -261,21 +552,22 @@
 	}
 
 	.world-actions {
-		display: flex;
-		gap: 12px;
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
 		margin-top: 8px;
 	}
 
 	.action-btn {
-		flex: 1;
-		padding: 10px 16px;
+		padding: 10px 12px;
 		border-radius: 8px;
 		border: none;
-		font-size: 14px;
+		font-size: 13px;
 		font-weight: 500;
 		cursor: pointer;
 		transition: all 0.2s;
 		font-family: inherit;
+		white-space: nowrap;
 	}
 
 	.action-btn:disabled {
@@ -293,6 +585,16 @@
 		background: rgba(106, 176, 76, 0.25);
 	}
 
+	.action-btn.upload {
+		background: rgba(111, 181, 255, 0.15);
+		color: #a6d5fa;
+		border: 1px solid rgba(111, 181, 255, 0.35);
+	}
+
+	.action-btn.upload:hover:not(:disabled) {
+		background: rgba(111, 181, 255, 0.25);
+	}
+
 	.action-btn.delete {
 		background: rgba(234, 85, 83, 0.15);
 		color: #ff9a98;
@@ -301,6 +603,23 @@
 
 	.action-btn.delete:hover:not(:disabled) {
 		background: rgba(234, 85, 83, 0.25);
+	}
+
+	.upload-progress {
+		margin-top: 12px;
+	}
+
+	.progress-bar {
+		height: 6px;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, #6ab04c 0%, #a8e063 100%);
+		transition: width 0.3s ease;
 	}
 
 	.info-box {
@@ -329,6 +648,11 @@
 	}
 
 	@media (max-width: 640px) {
+		.page-header {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
 		.worlds-grid {
 			grid-template-columns: 1fr;
 		}

@@ -304,6 +304,107 @@ public sealed class WorldService : IWorldService
         }
     }
 
+    public async Task<string> UploadNewWorldAsync(string serverName, Stream zipStream, CancellationToken cancellationToken)
+    {
+        var serverPath = GetServerPath(serverName);
+
+        if (!Directory.Exists(serverPath))
+        {
+            throw new DirectoryNotFoundException($"Server '{serverName}' not found");
+        }
+
+        _logger.LogInformation("Uploading new world to server {ServerName}", serverName);
+
+        // Create a temporary directory for extraction
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            // Save ZIP to temp file
+            var tempZipFile = Path.Combine(tempDir, "world.zip");
+            using (var fileStream = File.Create(tempZipFile))
+            {
+                await zipStream.CopyToAsync(fileStream, cancellationToken);
+            }
+
+            // Extract ZIP
+            await Task.Run(() =>
+            {
+                ZipFile.ExtractToDirectory(tempZipFile, tempDir);
+            }, cancellationToken);
+
+            // Delete the ZIP file
+            File.Delete(tempZipFile);
+
+            // Find the world folder (must contain level.dat)
+            string worldFolderPath = null;
+            string worldName = null;
+
+            var extractedDirs = Directory.GetDirectories(tempDir);
+            if (extractedDirs.Length == 1)
+            {
+                // Single folder in ZIP - check if it's a world
+                var dir = extractedDirs[0];
+                if (IsWorldFolder(dir))
+                {
+                    worldFolderPath = dir;
+                    worldName = Path.GetFileName(dir);
+                }
+            }
+
+            // If not found, check if tempDir itself is a world
+            if (worldFolderPath == null && IsWorldFolder(tempDir))
+            {
+                worldFolderPath = tempDir;
+                worldName = "world"; // Default name
+            }
+
+            if (worldFolderPath == null)
+            {
+                throw new ArgumentException("ZIP file does not contain a valid Minecraft world (no level.dat found)");
+            }
+
+            // Check if world already exists
+            var targetPath = Path.Combine(serverPath, worldName);
+            if (Directory.Exists(targetPath))
+            {
+                throw new ArgumentException($"World '{worldName}' already exists on this server. Use the replace function to update existing worlds.");
+            }
+
+            // Move the world folder to the server directory
+            if (worldFolderPath == tempDir)
+            {
+                // tempDir is the world itself
+                Directory.Move(tempDir, targetPath);
+                tempDir = null; // Prevent cleanup
+            }
+            else
+            {
+                // Move the world folder from inside tempDir
+                Directory.Move(worldFolderPath, targetPath);
+            }
+
+            _logger.LogInformation("Successfully uploaded new world {WorldName}", worldName);
+            return worldName;
+        }
+        finally
+        {
+            // Clean up temp directory if it still exists
+            if (tempDir != null && Directory.Exists(tempDir))
+            {
+                try
+                {
+                    Directory.Delete(tempDir, true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to clean up temporary directory {TempDir}", tempDir);
+                }
+            }
+        }
+    }
+
     public Task DeleteWorldAsync(string serverName, string worldName, CancellationToken cancellationToken)
     {
         var worldPath = GetWorldPath(serverName, worldName);

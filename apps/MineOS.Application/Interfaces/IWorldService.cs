@@ -25,6 +25,11 @@ public interface IWorldService
     Task UploadWorldAsync(string serverName, string worldName, Stream zipStream, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Upload a new world from a ZIP archive (auto-detects world name from ZIP)
+    /// </summary>
+    Task<string> UploadNewWorldAsync(string serverName, Stream zipStream, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Delete/reset a world folder
     /// </summary>
     Task DeleteWorldAsync(string serverName, string worldName, CancellationToken cancellationToken);
