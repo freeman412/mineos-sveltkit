@@ -13,6 +13,11 @@
 	let uninstallingModpack = $state<number | null>(null);
 	let uploading = $state(false);
 	let isDragging = $state(false);
+	let uploadProgress = $state(0);
+	let uploadingFileName = $state('');
+	let deletingAll = $state(false);
+
+	const isServerRunning = $derived(data.server?.status === 'running');
 
 	$effect(() => {
 		loadMods();
@@ -41,6 +46,13 @@
 
 	async function uninstallModpack(modpackId: number, modpackName: string) {
 		if (!data.server) return;
+
+		// Check if server is running
+		if (isServerRunning) {
+			await modal.error('Cannot uninstall modpacks while server is running. Stop the server first.');
+			return;
+		}
+
 		const confirmed = await modal.confirm(
 			`Uninstall modpack "${modpackName}"? This will remove all ${modpacks.find(m => m.id === modpackId)?.modCount ?? 0} mods from this modpack.`,
 			'Uninstall Modpack'
@@ -86,50 +98,140 @@
 
 	async function uploadModFile(file: File) {
 		if (!data.server) return;
-		if (!file.name.toLowerCase().endsWith('.jar') && !file.name.toLowerCase().endsWith('.zip')) {
-			await modal.error('Only .jar or .zip files are supported.');
+		const fileName = file.name.toLowerCase();
+		const validExtensions = ['.jar', '.zip', '.tar', '.tar.gz', '.tgz'];
+		const isValid = validExtensions.some((ext) => fileName.endsWith(ext));
+
+		if (!isValid) {
+			await modal.error(`Only .jar, .zip, .tar, and .tar.gz files are supported. Got: ${file.name}`);
 			return;
 		}
 
 		uploading = true;
+		uploadingFileName = file.name;
+		uploadProgress = 0;
+
 		try {
 			const form = new FormData();
 			form.append('file', file);
-			const res = await fetch(`/api/servers/${data.server.name}/mods/upload`, {
-				method: 'POST',
-				body: form
+
+			// Create XMLHttpRequest for progress tracking
+			const xhr = new XMLHttpRequest();
+
+			const uploadPromise = new Promise((resolve, reject) => {
+				xhr.upload.addEventListener('progress', (e) => {
+					if (e.lengthComputable) {
+						uploadProgress = Math.round((e.loaded / e.total) * 100);
+					}
+				});
+
+				xhr.addEventListener('load', () => {
+					if (xhr.status >= 200 && xhr.status < 300) {
+						resolve(xhr.response);
+					} else {
+						reject(new Error(`Upload failed: ${xhr.statusText}`));
+					}
+				});
+
+				xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+				xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+				xhr.open('POST', `/api/servers/${data.server.name}/mods/upload`);
+				xhr.send(form);
 			});
-			if (!res.ok) {
-				const payload = await res.json().catch(() => ({}));
-				await modal.error(payload.error || 'Failed to upload mod');
-			} else {
-				await loadMods();
-			}
+
+			await uploadPromise;
+			await loadMods();
 		} catch (err) {
-			await modal.error(err instanceof Error ? err.message : 'Upload failed');
+			await modal.error(err instanceof Error ? err.message : `Upload failed for ${file.name}`);
 		} finally {
 			uploading = false;
+			uploadProgress = 0;
+			uploadingFileName = '';
+		}
+	}
+
+	async function deleteAllMods() {
+		if (!data.server || isServerRunning) return;
+
+		const standaloneMods = groupedMods.standalone;
+		if (standaloneMods.length === 0) {
+			await modal.error('No standalone mods to delete');
+			return;
+		}
+
+		const confirmed = await modal.confirm(
+			`Delete all ${standaloneMods.length} standalone mod(s) from server "${data.server.name}"? This cannot be undone.`,
+			'Delete All Mods'
+		);
+		if (!confirmed) return;
+
+		deletingAll = true;
+		try {
+			let successCount = 0;
+			let failCount = 0;
+
+			for (const mod of standaloneMods) {
+				try {
+					const res = await fetch(
+						`/api/servers/${data.server.name}/mods/${encodeURIComponent(mod.fileName)}`,
+						{ method: 'DELETE' }
+					);
+					if (res.ok) {
+						successCount++;
+					} else {
+						failCount++;
+					}
+				} catch {
+					failCount++;
+				}
+			}
+
+			await loadMods();
+
+			if (failCount > 0) {
+				await modal.error(
+					`Deleted ${successCount} mods, but ${failCount} failed to delete.`
+				);
+			}
+		} catch (err) {
+			await modal.error(err instanceof Error ? err.message : 'Delete all failed');
+		} finally {
+			deletingAll = false;
 		}
 	}
 
 	async function handleUpload(event: Event) {
 		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		await uploadModFile(file);
+		const files = Array.from(input.files || []);
+		if (files.length === 0) return;
+
+		for (const file of files) {
+			await uploadModFile(file);
+		}
 		input.value = '';
 	}
 
 	async function handleDrop(event: DragEvent) {
 		event.preventDefault();
 		isDragging = false;
-		const file = event.dataTransfer?.files?.[0];
-		if (!file) return;
-		await uploadModFile(file);
+		const files = Array.from(event.dataTransfer?.files || []);
+		if (files.length === 0) return;
+
+		for (const file of files) {
+			await uploadModFile(file);
+		}
 	}
 
 	async function deleteMod(fileName: string) {
 		if (!data.server) return;
+
+		// Check if server is running
+		if (isServerRunning) {
+			await modal.error('Cannot delete mods while server is running. Stop the server first.');
+			return;
+		}
+
 		const confirmed = await modal.confirm(`Delete ${fileName}?`, 'Delete Mod');
 		if (!confirmed) return;
 
@@ -163,13 +265,32 @@
 			<p class="subtitle">Upload, manage, and install mods for this server</p>
 		</div>
 		<div class="action-buttons">
+			{#if groupedMods.standalone.length > 0}
+				<button
+					class="delete-all-btn"
+					onclick={deleteAllMods}
+					disabled={deletingAll || isServerRunning}
+					title={isServerRunning
+						? 'Stop server to delete mods'
+						: `Delete all ${groupedMods.standalone.length} standalone mods from this server`}
+				>
+					{deletingAll ? 'Deleting...' : `Delete All Mods (${groupedMods.standalone.length})`}
+				</button>
+			{/if}
 			<label class="upload-button">
-				<input type="file" accept=".jar,.zip" onchange={handleUpload} disabled={uploading} />
-				{uploading ? 'Uploading...' : 'Upload Mod'}
+				<input
+					type="file"
+					accept=".jar,.zip,.tar,.tar.gz,.tgz"
+					multiple
+					onchange={handleUpload}
+					disabled={uploading}
+				/>
+				{uploading ? 'Uploading...' : 'Upload Mods'}
 			</label>
 		</div>
 	</div>
 
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="upload-drop"
 		class:active={isDragging}
@@ -183,9 +304,26 @@
 		ondrop={handleDrop}
 	>
 		<div class="drop-content">
-			<strong>Drag & drop</strong> a mod file here (.jar or .zip), or use Upload Mod.
+			<strong>Drag & drop</strong> mod files here (.jar, .zip, .tar, .tar.gz), or use Upload Mods button
+			above.
 		</div>
 	</div>
+
+	<!-- Upload Progress -->
+	{#if uploading}
+		<div class="upload-progress-container">
+			<div class="progress-header">
+				<span class="progress-title">Uploading: {uploadingFileName}</span>
+				<span class="progress-percent">{uploadProgress}%</span>
+			</div>
+			<div class="progress-bar-bg">
+				<div class="progress-bar-fill" style="width: {uploadProgress}%"></div>
+			</div>
+			{#if uploadProgress === 100}
+				<p class="progress-message">Processing and extracting files...</p>
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Installed Modpacks -->
 	{#if modpacks.length > 0}
@@ -213,7 +351,8 @@
 							<button
 								class="btn-action danger"
 								onclick={() => uninstallModpack(modpack.id, modpack.name)}
-								disabled={uninstallingModpack === modpack.id}
+								disabled={uninstallingModpack === modpack.id || isServerRunning}
+								title={isServerRunning ? 'Stop server to uninstall' : ''}
 							>
 								{uninstallingModpack === modpack.id ? 'Removing...' : 'Uninstall'}
 							</button>
@@ -273,7 +412,12 @@
 									>
 										Download
 									</a>
-									<button class="btn-action danger" onclick={() => deleteMod(mod.fileName)}>
+									<button
+										class="btn-action danger"
+										onclick={() => deleteMod(mod.fileName)}
+										disabled={isServerRunning}
+										title={isServerRunning ? 'Stop server to delete' : ''}
+									>
 										Delete
 									</button>
 								</td>
@@ -415,6 +559,11 @@
 		color: #ff9f9f;
 	}
 
+	.btn-action:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.disabled {
 		opacity: 0.6;
 	}
@@ -532,5 +681,79 @@
 		color: #8890b1;
 		margin-left: 12px;
 		flex-shrink: 0;
+	}
+
+	.delete-all-btn {
+		background: rgba(255, 92, 92, 0.15);
+		color: #ff9f9f;
+		border: 1px solid rgba(255, 92, 92, 0.3);
+		border-radius: 8px;
+		padding: 10px 20px;
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.delete-all-btn:hover:not(:disabled) {
+		background: rgba(255, 92, 92, 0.25);
+	}
+
+	.delete-all-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.upload-progress-container {
+		background: #1a1e2f;
+		border-radius: 12px;
+		padding: 16px 20px;
+		box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+	}
+
+	.progress-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 12px;
+	}
+
+	.progress-title {
+		color: #eef0f8;
+		font-size: 14px;
+		font-weight: 600;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		flex: 1;
+	}
+
+	.progress-percent {
+		color: #9aa2c5;
+		font-size: 14px;
+		font-weight: 600;
+		margin-left: 12px;
+	}
+
+	.progress-bar-bg {
+		height: 8px;
+		background: #141827;
+		border-radius: 999px;
+		overflow: hidden;
+		border: 1px solid #2a2f47;
+	}
+
+	.progress-bar-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--mc-grass), #7ae68d);
+		transition: width 0.3s ease;
+		border-radius: 999px;
+	}
+
+	.progress-message {
+		margin: 8px 0 0;
+		color: #9aa2c5;
+		font-size: 13px;
+		font-style: italic;
 	}
 </style>

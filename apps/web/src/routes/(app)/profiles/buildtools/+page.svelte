@@ -13,6 +13,39 @@
 	let runsLoading = $state(false);
 	let logContainer: HTMLDivElement | null = null;
 	let eventSource: EventSource | null = null;
+	let loadRunsTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// Common Minecraft versions for Spigot/CraftBukkit
+	const commonVersions = [
+		'latest',
+		'1.21.4',
+		'1.21.3',
+		'1.21.1',
+		'1.21',
+		'1.20.6',
+		'1.20.4',
+		'1.20.2',
+		'1.20.1',
+		'1.20',
+		'1.19.4',
+		'1.19.3',
+		'1.19.2',
+		'1.19.1',
+		'1.19',
+		'1.18.2',
+		'1.18.1',
+		'1.17.1',
+		'1.16.5',
+		'1.16.4',
+		'1.15.2',
+		'1.14.4',
+		'1.13.2',
+		'1.12.2',
+		'1.11.2',
+		'1.10.2',
+		'1.9.4',
+		'1.8.8',
+	];
 
 	$effect(() => {
 		if (logContainer) {
@@ -76,7 +109,7 @@
 					if (entry.status === 'completed') {
 						invalidateAll();
 					}
-					loadRuns();
+					loadRunsDebounced();
 				}
 			} catch {
 				logs = [...logs, event.data];
@@ -94,6 +127,8 @@
 	}
 
 	async function loadRuns() {
+		if (runsLoading) return; // Prevent concurrent requests
+
 		runsLoading = true;
 		try {
 			const res = await fetch('/api/host/profiles/buildtools/runs');
@@ -103,6 +138,13 @@
 		} finally {
 			runsLoading = false;
 		}
+	}
+
+	function loadRunsDebounced() {
+		if (loadRunsTimeout) clearTimeout(loadRunsTimeout);
+		loadRunsTimeout = setTimeout(() => {
+			loadRuns();
+		}, 500); // Debounce by 500ms
 	}
 
 	function attachRun(id: string) {
@@ -131,6 +173,7 @@
 
 	onDestroy(() => {
 		eventSource?.close();
+		if (loadRunsTimeout) clearTimeout(loadRunsTimeout);
 	});
 </script>
 
@@ -162,7 +205,12 @@
 			</label>
 			<label>
 				Version
-				<input type="text" bind:value={buildVersion} placeholder="1.20.4" disabled={status === 'running'} />
+				<select bind:value={buildVersion} disabled={status === 'running'}>
+					<option value="">Select a version...</option>
+					{#each commonVersions as version}
+						<option value={version}>{version}</option>
+					{/each}
+				</select>
 			</label>
 			<button class="btn-primary" type="submit" disabled={status === 'running'}>
 				{status === 'running' ? 'Building...' : 'Run BuildTools'}
