@@ -10,6 +10,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Print colored messages
@@ -27,14 +28,6 @@ warn() {
 
 error() {
     echo -e "${RED}[ERR]${NC} $1"
-}
-
-header() {
-    echo ""
-    echo -e "${GREEN}================================${NC}"
-    echo -e "${GREEN}$1${NC}"
-    echo -e "${GREEN}================================${NC}"
-    echo ""
 }
 
 # Check if command exists
@@ -58,16 +51,64 @@ set_compose_cmd() {
     return 1
 }
 
-# Dependency checking
+# Show banner
+show_banner() {
+    clear
+    echo -e "${GREEN}"
+    echo "  __  __ _            ___  ____  "
+    echo " |  \/  (_)_ __   ___/ _ \/ ___| "
+    echo " | |\/| | | '_ \ / _ \ | | \___ \ "
+    echo " | |  | | | | | |  __/ |_| |___) |"
+    echo " |_|  |_|_|_| |_|\___|\___/|____/ "
+    echo -e "${NC}"
+    echo -e "${CYAN}Minecraft Server Management${NC}"
+    echo ""
+}
+
+# Check if MineOS is installed
+is_installed() {
+    [ -f .env ] && [ -f docker-compose.yml ]
+}
+
+# Check if services are running
+services_running() {
+    if ! set_compose_cmd; then
+        return 1
+    fi
+
+    local running
+    running=$("${COMPOSE_CMD[@]}" ps --status running -q 2>/dev/null | wc -l)
+    [ "$running" -gt 0 ]
+}
+
+# Show current status
+show_status() {
+    echo -e "${CYAN}Installation Status:${NC}"
+
+    if is_installed; then
+        echo -e "  Config:   ${GREEN}Configured${NC}"
+    else
+        echo -e "  Config:   ${YELLOW}Not configured${NC}"
+    fi
+
+    if set_compose_cmd && services_running; then
+        echo -e "  Services: ${GREEN}Running${NC}"
+    else
+        echo -e "  Services: ${YELLOW}Stopped${NC}"
+    fi
+    echo ""
+}
+
+# Check dependencies
 check_dependencies() {
-    header "Checking Dependencies"
+    info "Checking dependencies..."
 
     local all_ok=true
 
     # Check Docker
     if command_exists docker; then
         local docker_version
-        docker_version=$(docker --version | grep -oE '\d+\.\d+\.\d+' | head -1)
+        docker_version=$(docker --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         success "Docker is installed (version $docker_version)"
     else
         error "Docker is not installed"
@@ -79,9 +120,9 @@ check_dependencies() {
     if set_compose_cmd; then
         local compose_version
         if [ "${COMPOSE_CMD[0]}" = "docker" ]; then
-            compose_version=$(docker compose version --short 2>/dev/null || docker compose version | grep -oE '\d+\.\d+\.\d+' | head -1)
+            compose_version=$(docker compose version --short 2>/dev/null || docker compose version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         else
-            compose_version=$(docker-compose --version | grep -oE '\d+\.\d+\.\d+' | head -1)
+            compose_version=$(docker-compose --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         fi
         success "Docker Compose is installed (version $compose_version)"
     else
@@ -90,30 +131,12 @@ check_dependencies() {
         all_ok=false
     fi
 
-    # Optional: Check .NET SDK (for development)
-    if command_exists dotnet; then
-        local dotnet_version
-        dotnet_version=$(dotnet --version)
-        success ".NET SDK is installed (version $dotnet_version) - optional"
-    else
-        warn ".NET SDK not found (optional, only needed for development)"
-    fi
-
-    # Optional: Check Node.js (for development)
-    if command_exists node; then
-        local node_version
-        node_version=$(node --version)
-        success "Node.js is installed (version $node_version) - optional"
-    else
-        warn "Node.js not found (optional, only needed for development)"
-    fi
-
     if [ "$all_ok" = false ]; then
         error "Required dependencies are missing. Please install them and try again."
         exit 1
     fi
 
-    success "All required dependencies are installed!"
+    echo ""
 }
 
 get_env_value() {
@@ -131,17 +154,10 @@ get_env_value() {
     echo "${line#*=}"
 }
 
-load_existing_config() {
-    admin_user=$(get_env_value Auth__SeedUsername 2>/dev/null || echo "admin")
-    admin_pass=$(get_env_value Auth__SeedPassword 2>/dev/null || echo "")
-    API_KEY=$(get_env_value ApiKey__SeedKey 2>/dev/null || echo "")
-    api_port=$(get_env_value API_PORT 2>/dev/null || echo "5078")
-    web_port=$(get_env_value WEB_PORT 2>/dev/null || echo "3000")
-}
-
 # Configuration wizard
 run_config_wizard() {
-    header "Configuration Wizard"
+    echo -e "${CYAN}Configuration Wizard${NC}"
+    echo ""
 
     info "This wizard will help you configure MineOS"
     echo ""
@@ -189,7 +205,7 @@ run_config_wizard() {
 
 # Create environment file
 create_env_file() {
-    header "Creating Environment File"
+    info "Creating environment file..."
 
     cat > .env << EOF
 # Database Configuration
@@ -237,7 +253,7 @@ EOF
 
 # Create required directories
 create_directories() {
-    header "Creating Directories"
+    info "Creating directories..."
 
     mkdir -p "${base_dir}/servers"
     mkdir -p "${base_dir}/profiles"
@@ -245,8 +261,6 @@ create_directories() {
     mkdir -p "${base_dir}/archives"
     mkdir -p "${base_dir}/imports"
     mkdir -p "./data"
-
-    success "Created required directories"
 
     # Set permissions
     if [ "$EUID" -eq 0 ]; then
@@ -256,22 +270,42 @@ create_directories() {
         warn "Not running as root, skipping ownership change"
         warn "You may need to run: sudo chown -R 1000:1000 ${base_dir}"
     fi
+
+    success "Created required directories"
 }
 
-# Start services
-start_services() {
-    header "Starting Services"
-
-    if [ -z "${COMPOSE_CMD_DISPLAY:-}" ]; then
-        set_compose_cmd
+# Build and start services
+build_services() {
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
     fi
 
-    info "Starting Docker Compose services..."
+    info "Building Docker images..."
+    if [ "${COMPOSE_CMD[0]}" = "docker" ]; then
+        "${COMPOSE_CMD[@]}" build --progress plain
+    else
+        "${COMPOSE_CMD[@]}" build
+    fi
+
+    success "Build complete"
+}
+
+# Start services (without rebuild)
+start_services() {
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
+    fi
+
+    info "Starting services..."
     "${COMPOSE_CMD[@]}" up -d
 
-    success "Services started!"
-
+    # Wait for API
     if command_exists curl; then
+        local api_port
+        api_port=$(get_env_value API_PORT 2>/dev/null || echo "5078")
+
         info "Waiting for API to be ready..."
         local max_attempts=30
         local attempt=0
@@ -288,75 +322,210 @@ start_services() {
         if [ $attempt -eq $max_attempts ]; then
             warn "API may not be ready yet. Check logs with: ${COMPOSE_CMD_DISPLAY} logs api"
         fi
-    else
-        warn "curl not found; skipping API health check"
     fi
+
+    success "Services started"
 }
 
-# Show first-run guide
-show_guide() {
-    header "Setup Complete!"
+# Stop services
+stop_services() {
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
+    fi
 
-    echo -e "${GREEN}MineOS is now running!${NC}"
-    echo ""
-    echo "Access URLs:"
-    echo -e "  ${BLUE}Web UI:${NC}    http://localhost:${web_port}"
-    echo -e "  ${BLUE}API:${NC}       http://localhost:${api_port}"
-    echo -e "  ${BLUE}API Docs:${NC}  http://localhost:${api_port}/swagger"
-    echo ""
-    echo "Admin Credentials:"
-    echo -e "  ${BLUE}Username:${NC}  ${admin_user}"
-    echo -e "  ${BLUE}Password:${NC}  ${admin_pass}"
-    echo ""
-    echo "API Key (for programmatic access):"
-    echo -e "  ${BLUE}${API_KEY}${NC}"
-    echo ""
-    echo "Auto-start:"
-    echo "  Containers restart automatically when Docker starts."
-    echo "  Make sure Docker is set to start on boot/login."
-    echo ""
-    echo "Useful Commands:"
-    echo "  View logs:        ${COMPOSE_CMD_DISPLAY} logs -f"
-    echo "  Stop services:    ${COMPOSE_CMD_DISPLAY} down"
-    echo "  Restart services: ${COMPOSE_CMD_DISPLAY} restart"
-    echo "  Update services:  ${COMPOSE_CMD_DISPLAY} pull && ${COMPOSE_CMD_DISPLAY} up -d"
-    echo ""
-    echo "Documentation:"
-    echo "  Testing Guide:    ./QUICK-TEST-GUIDE.md"
-    echo "  Roadmap:          ./IMPLEMENTATION-ROADMAP.md"
-    echo ""
-    success "Setup completed successfully!"
+    info "Stopping services..."
+    "${COMPOSE_CMD[@]}" down
+    success "Services stopped"
 }
 
-# Main execution
-main() {
-    clear
-    header "MineOS Setup"
+# Restart services
+restart_services() {
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
+    fi
 
-    info "Welcome to MineOS! This script will help you get started."
+    info "Restarting services..."
+    "${COMPOSE_CMD[@]}" restart
+    success "Services restarted"
+}
+
+# View logs
+view_logs() {
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
+    fi
+
+    info "Showing logs (Ctrl+C to exit)..."
+    "${COMPOSE_CMD[@]}" logs -f
+}
+
+# Show detailed status
+show_detailed_status() {
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
+    fi
+
+    echo -e "${CYAN}Service Status:${NC}"
+    echo ""
+    "${COMPOSE_CMD[@]}" ps
+    echo ""
+
+    if is_installed; then
+        local api_port
+        local web_port
+        api_port=$(get_env_value API_PORT 2>/dev/null || echo "5078")
+        web_port=$(get_env_value WEB_PORT 2>/dev/null || echo "3000")
+
+        echo -e "${CYAN}Access URLs:${NC}"
+        echo -e "  Web UI:    ${GREEN}http://localhost:${web_port}${NC}"
+        echo -e "  API:       ${GREEN}http://localhost:${api_port}${NC}"
+        echo -e "  API Docs:  ${GREEN}http://localhost:${api_port}/swagger${NC}"
+    fi
+
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Fresh install
+fresh_install() {
+    echo -e "${CYAN}Fresh Install${NC}"
     echo ""
 
     check_dependencies
-
-    # Check if .env already exists
-    if [ -f .env ]; then
-        warn ".env file already exists!"
-        read -p "Do you want to reconfigure? This will overwrite existing settings. (y/N): " reconfigure
-        if [ "$reconfigure" != "y" ] && [ "$reconfigure" != "Y" ]; then
-            info "Using existing configuration"
-            load_existing_config
-            start_services
-            show_guide
-            exit 0
-        fi
-    fi
-
-    # Run setup steps
     run_config_wizard
     create_env_file
     create_directories
+    build_services
     start_services
-    show_guide
+
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}  Installation Complete!${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo ""
+
+    local api_port
+    local web_port
+    api_port=$(get_env_value API_PORT 2>/dev/null || echo "5078")
+    web_port=$(get_env_value WEB_PORT 2>/dev/null || echo "3000")
+
+    echo -e "${CYAN}Access URLs:${NC}"
+    echo -e "  Web UI:    ${GREEN}http://localhost:${web_port}${NC}"
+    echo -e "  API:       ${GREEN}http://localhost:${api_port}${NC}"
+    echo -e "  API Docs:  ${GREEN}http://localhost:${api_port}/swagger${NC}"
+    echo ""
+    echo -e "${CYAN}Admin Credentials:${NC}"
+    echo -e "  Username:  ${GREEN}${admin_user}${NC}"
+    echo -e "  Password:  ${GREEN}${admin_pass}${NC}"
+    echo ""
+    echo -e "${CYAN}API Key:${NC}"
+    echo -e "  ${GREEN}${API_KEY}${NC}"
+    echo ""
+
+    read -p "Press Enter to continue..."
+}
+
+# Rebuild (keep config)
+rebuild() {
+    echo -e "${CYAN}Rebuild${NC}"
+    echo ""
+
+    info "Rebuilding containers (keeping configuration)..."
+
+    if ! set_compose_cmd; then
+        error "Docker Compose not found"
+        exit 1
+    fi
+
+    "${COMPOSE_CMD[@]}" down
+    build_services
+    "${COMPOSE_CMD[@]}" up -d --force-recreate
+
+    success "Rebuild complete"
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Update (git pull + rebuild)
+update() {
+    echo -e "${CYAN}Update${NC}"
+    echo ""
+
+    if ! command_exists git; then
+        error "Git is not installed"
+        read -p "Press Enter to continue..."
+        return
+    fi
+
+    info "Pulling latest changes..."
+    git pull
+
+    info "Rebuilding..."
+    rebuild
+}
+
+# Show menu for not installed state
+show_menu_not_installed() {
+    echo -e "${CYAN}Options:${NC}"
+    echo "  [1] Fresh Install"
+    echo "  [Q] Quit"
+    echo ""
+}
+
+# Show menu for installed state
+show_menu_installed() {
+    echo -e "${CYAN}Options:${NC}"
+    echo "  [1] Start Services"
+    echo "  [2] Stop Services"
+    echo "  [3] Restart Services"
+    echo "  [4] View Logs"
+    echo "  [5] Show Status"
+    echo ""
+    echo "  [6] Rebuild (keep config)"
+    echo "  [7] Update (git pull + rebuild)"
+    echo "  [8] Fresh Install (reset everything)"
+    echo ""
+    echo "  [Q] Quit"
+    echo ""
+}
+
+# Main menu loop
+main() {
+    while true; do
+        show_banner
+        show_status
+
+        if is_installed; then
+            show_menu_installed
+            read -p "Select option: " choice
+
+            case $choice in
+                1) start_services; read -p "Press Enter to continue..." ;;
+                2) stop_services; read -p "Press Enter to continue..." ;;
+                3) restart_services; read -p "Press Enter to continue..." ;;
+                4) view_logs ;;
+                5) show_detailed_status ;;
+                6) rebuild ;;
+                7) update ;;
+                8) fresh_install ;;
+                [Qq]) echo "Goodbye!"; exit 0 ;;
+                *) warn "Invalid option" ;;
+            esac
+        else
+            show_menu_not_installed
+            read -p "Select option: " choice
+
+            case $choice in
+                1) fresh_install ;;
+                [Qq]) echo "Goodbye!"; exit 0 ;;
+                *) warn "Invalid option" ;;
+            esac
+        fi
+    done
 }
 
 # Run main function

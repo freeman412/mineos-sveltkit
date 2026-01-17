@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Copy solution and project files
-COPY ["mineos-sveltekit.sln", "./"]
+COPY ["mineos-sveltkit.sln", "./"]
 COPY ["apps/MineOS.Api/MineOS.Api.csproj", "apps/MineOS.Api/"]
 COPY ["apps/MineOS.Application/MineOS.Application.csproj", "apps/MineOS.Application/"]
 COPY ["apps/MineOS.Domain/MineOS.Domain.csproj", "apps/MineOS.Domain/"]
@@ -27,13 +27,26 @@ RUN dotnet publish "MineOS.Api.csproj" -c Release -o /app/publish /p:UseAppHost=
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 
 # Install required packages
-RUN apt-get update && apt-get install -y \
-    screen \
-    openjdk-21-jre-headless \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
-    util-linux \
+    git \
+    gnupg \
+    iproute2 \
     procps \
+    rdiff-backup \
     rsync \
+    screen \
+    tar \
+    util-linux \
+    wget \
+    && mkdir -p /etc/apt/keyrings \
+    && wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public \
+       | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo $VERSION_CODENAME) main" \
+       > /etc/apt/sources.list.d/adoptium.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends temurin-21-jre temurin-8-jre \
     && rm -rf /var/lib/apt/lists/*
 
 # Create minecraft user with UID 1000 and GID 1000

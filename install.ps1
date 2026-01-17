@@ -1,20 +1,8 @@
-# MineOS Install Script for Windows
+# MineOS Install & Management Script for Windows
 # Interactive setup using PowerShell
-#
-# Fixes:
-# - Reliable docker compose invocation (v2 + v1 fallback)
-# - Configurable Minecraft port range during setup
-# - Startup wait is bounded + reports failing container logs
-# - Avoids PowerShell NativeCommandError crashes from docker output/warnings
-#
-# IMPORTANT:
-# PowerShell 7+ can treat native stderr as an error record that respects $ErrorActionPreference.
-# We disable that with $PSNativeCommandUseErrorActionPreference = $false, and we run compose
-# via Start-Process to avoid NativeCommandError in Windows PowerShell.
 
 $ErrorActionPreference = "Stop"
 
-# Disable native-command stderr -> PowerShell error record behavior (prevents NativeCommandError explosions)
 if ($PSVersionTable.PSVersion.Major -ge 7) {
     $global:PSNativeCommandUseErrorActionPreference = $false
 }
@@ -39,11 +27,18 @@ function Test-CommandExists {
     return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
-# Detect Docker Compose (v2 preferred, v1 fallback)
+# Detect Docker Compose
 function Set-ComposeCommand {
     if (Get-Command docker -ErrorAction SilentlyContinue) {
-        & docker compose version *> $null
-        if ($LASTEXITCODE -eq 0) {
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $outLines = & docker compose version 2>&1
+            $outText = ($outLines | Out-String).Trim()
+        } finally {
+            $ErrorActionPreference = $oldEap
+        }
+        if ($outText -match "Docker Compose version" -or $outText -match '\d+\.\d+\.\d+') {
             $script:composeExe = "docker"
             $script:composeBaseArgs = @("compose")
             $script:composeCmdText = "docker compose"
@@ -52,8 +47,15 @@ function Set-ComposeCommand {
     }
 
     if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
-        & docker-compose version *> $null
-        if ($LASTEXITCODE -eq 0) {
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $outLines = & docker-compose version 2>&1
+            $outText = ($outLines | Out-String).Trim()
+        } finally {
+            $ErrorActionPreference = $oldEap
+        }
+        if ($outText -match "Docker Compose version" -or $outText -match '\d+\.\d+\.\d+') {
             $script:composeExe = "docker-compose"
             $script:composeBaseArgs = @()
             $script:composeCmdText = "docker-compose"
@@ -61,16 +63,14 @@ function Set-ComposeCommand {
         }
     }
 
-    throw "Docker Compose not found (or not usable from this shell)."
+    throw "Docker Compose not found."
 }
 
-# Invoke compose safely:
-# - Always captures stdout+stderr as text to avoid PowerShell interpreting stderr as an error record
-# - Returns { Output, ExitCode }
 function Invoke-Compose {
     param(
         [Parameter(Mandatory = $true)]
-        [string[]]$Args
+        [string[]]$Args,
+        [switch]$StreamOutput
     )
 
     if (-not $script:composeExe) { Set-ComposeCommand }
@@ -79,17 +79,32 @@ function Invoke-Compose {
     if ($script:composeBaseArgs) { $allArgs += $script:composeBaseArgs }
     if ($Args) { $allArgs += $Args }
 
+    $argString = ($allArgs | ForEach-Object {
+        if ($_ -match '\s') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' '
+
     $outFile = New-TemporaryFile
     $errFile = New-TemporaryFile
 
     try {
         $proc = Start-Process -FilePath $script:composeExe `
-            -ArgumentList $allArgs `
+            -ArgumentList $argString `
             -NoNewWindow `
-            -Wait `
             -PassThru `
             -RedirectStandardOutput $outFile `
             -RedirectStandardError $errFile
+        if ($StreamOutput) {
+            $outOffset = 0L
+            $errOffset = 0L
+            while (-not $proc.HasExited) {
+                Start-Sleep -Milliseconds 200
+                $outOffset = Write-NewFileContent -Path $outFile -Offset $outOffset
+                $errOffset = Write-NewFileContent -Path $errFile -Offset $errOffset
+            }
+            $outOffset = Write-NewFileContent -Path $outFile -Offset $outOffset
+            $errOffset = Write-NewFileContent -Path $errFile -Offset $errOffset
+        }
+        $proc.WaitForExit()
 
         $out = ""
         if (Test-Path $outFile) { $out = Get-Content $outFile -Raw }
@@ -102,26 +117,25 @@ function Invoke-Compose {
     }
 }
 
-function Invoke-ComposeOrThrow {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string[]]$Args,
-        [string]$What = "compose command"
-    )
-
-    $r = Invoke-Compose -Args $Args
-    if ($r.ExitCode -ne 0) {
-        throw "Failed $What (exit $($r.ExitCode)). Output:`n$($r.Output)"
+function Write-NewFileContent {
+    param([string]$Path, [long]$Offset)
+    if (-not (Test-Path $Path)) { return $Offset }
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        if ($Offset -gt $fs.Length) { $Offset = $fs.Length }
+        [void]$fs.Seek($Offset, [System.IO.SeekOrigin]::Begin)
+        $reader = New-Object System.IO.StreamReader($fs)
+        try {
+            $text = $reader.ReadToEnd()
+            $newOffset = $fs.Position
+        } finally {
+            $reader.Dispose()
+        }
+    } finally {
+        $fs.Dispose()
     }
-    return $r
-}
-
-function Get-ComposeVersion {
-    $r = Invoke-ComposeOrThrow -Args @("version") -What "getting compose version"
-    $m = [regex]'\d+\.\d+\.\d+'
-    $ver = $m.Match([string]$r.Output).Value
-    if ([string]::IsNullOrWhiteSpace($ver)) { return ([string]$r.Output).Trim() }
-    return $ver
+    if (-not [string]::IsNullOrEmpty($text)) { Write-Host -NoNewline $text }
+    return $newOffset
 }
 
 function Get-EnvValue {
@@ -138,24 +152,16 @@ function Get-EnvValue {
 function Load-ExistingConfig {
     $script:adminUser = Get-EnvValue "Auth__SeedUsername"
     if ([string]::IsNullOrWhiteSpace($script:adminUser)) { $script:adminUser = "admin" }
-
     $script:adminPass = Get-EnvValue "Auth__SeedPassword"
-    if ([string]::IsNullOrWhiteSpace($script:adminPass)) { $script:adminPass = "" }
-
     $script:apiKey = Get-EnvValue "ApiKey__SeedKey"
-    if ([string]::IsNullOrWhiteSpace($script:apiKey)) { $script:apiKey = "" }
-
     $script:apiPort = Get-EnvValue "API_PORT"
     if ([string]::IsNullOrWhiteSpace($script:apiPort)) { $script:apiPort = "5078" }
-
     $script:webPort = Get-EnvValue "WEB_PORT"
     if ([string]::IsNullOrWhiteSpace($script:webPort)) { $script:webPort = "3000" }
-
     $script:mcPortRange = Get-EnvValue "MC_PORT_RANGE"
     if ([string]::IsNullOrWhiteSpace($script:mcPortRange)) { $script:mcPortRange = "25565-25570" }
-
-    $script:mcExtraPorts = Get-EnvValue "MC_EXTRA_PORTS"
-    if ([string]::IsNullOrWhiteSpace($script:mcExtraPorts)) { $script:mcExtraPorts = "" }
+    $script:baseDir = Get-EnvValue "Host__BaseDirectory"
+    if ([string]::IsNullOrWhiteSpace($script:baseDir)) { $script:baseDir = "C:/minecraft" }
 }
 
 function Assert-PortNumber {
@@ -168,14 +174,11 @@ function Assert-PortNumber {
 
 function Assert-PortRange {
     param([string]$Value, [string]$Name)
-
     if ($Value -match '^\d+$') {
         [void](Assert-PortNumber -Value $Value -Name $Name)
         return $Value
     }
-
-    if (-not ($Value -match '^(\d+)\-(\d+)$')) { throw "$Name must be like 25565-25570 (or a single port like 25565)." }
-
+    if (-not ($Value -match '^(\d+)\-(\d+)$')) { throw "$Name must be like 25565-25570." }
     $start = [int]$Matches[1]
     $end   = [int]$Matches[2]
     if ($start -lt 1 -or $start -gt 65535 -or $end -lt 1 -or $end -gt 65535) { throw "$Name ports must be between 1 and 65535." }
@@ -184,14 +187,13 @@ function Assert-PortRange {
 }
 
 function Test-Dependencies {
-    Write-Header "Checking Dependencies"
+    Write-Info "Checking dependencies..."
     $allOk = $true
 
     if (Test-CommandExists "docker") {
         $dockerOut = docker --version 2>&1
         $dockerVersion = ([regex]'\d+\.\d+\.\d+').Match([string]$dockerOut).Value
-        if ([string]::IsNullOrWhiteSpace($dockerVersion)) { $dockerVersion = ([string]$dockerOut).Trim() }
-        Write-Success "Docker is installed (version $dockerVersion)"
+        Write-Success "Docker $dockerVersion"
     } else {
         Write-Error-Custom "Docker is not installed"
         Write-Info "Please install Docker Desktop: https://docs.docker.com/desktop/install/windows-install/"
@@ -200,40 +202,49 @@ function Test-Dependencies {
 
     try {
         Set-ComposeCommand
-        $composeVersion = Get-ComposeVersion
-        Write-Success "Docker Compose is installed (version $composeVersion)"
+        Write-Success "Docker Compose found"
     } catch {
         Write-Error-Custom "Docker Compose is not installed"
-        Write-Info "Please install Docker Desktop (includes Docker Compose)"
         $allOk = $false
     }
 
-    if (Test-CommandExists "dotnet") {
-        $dotnetVersion = (dotnet --version 2>&1).ToString().Trim()
-        Write-Success ".NET SDK is installed (version $dotnetVersion) - optional"
-    } else {
-        Write-Warn ".NET SDK not found (optional, only needed for development)"
-    }
-
-    if (Test-CommandExists "node") {
-        $nodeVersion = (node --version 2>&1).ToString().Trim()
-        Write-Success "Node.js is installed (version $nodeVersion) - optional"
-    } else {
-        Write-Warn "Node.js not found (optional, only needed for development)"
-    }
-
     if (-not $allOk) {
-        Write-Error-Custom "Required dependencies are missing. Please install them and try again."
+        Write-Error-Custom "Required dependencies are missing."
         exit 1
     }
+}
 
-    Write-Success "All required dependencies are installed!"
+function Get-ServiceStatus {
+    $r = Invoke-Compose -Args @("ps", "--format", "json")
+    if ($r.ExitCode -ne 0) { return @() }
+    try {
+        $services = $r.Output | ConvertFrom-Json
+        return $services
+    } catch {
+        return @()
+    }
+}
+
+function Show-Status {
+    Write-Header "Service Status"
+
+    if (-not (Test-Path ".env")) {
+        Write-Warn "MineOS is not installed. Run fresh install first."
+        return
+    }
+
+    Load-ExistingConfig
+    $r = Invoke-Compose -Args @("ps")
+    Write-Host $r.Output
+
+    Write-Host ""
+    Write-Host "URLs (when running):"
+    Write-Host "  Web UI:   http://localhost:$webPort" -ForegroundColor Cyan
+    Write-Host "  API:      http://localhost:$apiPort" -ForegroundColor Cyan
 }
 
 function Start-ConfigWizard {
     Write-Header "Configuration Wizard"
-    Write-Info "This wizard will help you configure MineOS"
-    Write-Host ""
 
     $script:dbType = "sqlite"
     $script:dbConnection = "Data Source=/app/data/mineos.db"
@@ -260,25 +271,11 @@ function Start-ConfigWizard {
     if ([string]::IsNullOrWhiteSpace($script:webPort)) { $script:webPort = "3000" }
     [void](Assert-PortNumber -Value $script:webPort -Name "Web UI port")
 
-    Write-Host ""
-    $script:mcPortRange = Read-Host "Minecraft server port range to expose (default: 25565-25570)"
+    $script:mcPortRange = Read-Host "Minecraft server port range (default: 25565-25570)"
     if ([string]::IsNullOrWhiteSpace($script:mcPortRange)) { $script:mcPortRange = "25565-25570" }
     $script:mcPortRange = Assert-PortRange -Value $script:mcPortRange -Name "Minecraft port range"
 
-    $script:mcExtraPorts = Read-Host "Extra Minecraft ports (comma-separated, optional; e.g. 25575,24454). Press Enter to skip"
-    if (-not [string]::IsNullOrWhiteSpace($script:mcExtraPorts)) {
-        if (-not ($script:mcExtraPorts -match '^\s*\d+(\s*,\s*\d+)*\s*$')) {
-            throw "Extra ports must be comma-separated numbers, like 25575,24454"
-        }
-        $script:mcExtraPorts = ($script:mcExtraPorts -split '\s*,\s*' | ForEach-Object {
-            [void](Assert-PortNumber -Value $_ -Name "Extra port")
-            $_
-        }) -join ","
-    } else {
-        $script:mcExtraPorts = ""
-    }
-
-    Write-Host ""
+    $script:mcExtraPorts = ""
     $script:curseforgeKey = Read-Host "CurseForge API key (optional, press Enter to skip)"
     $script:discordWebhook = Read-Host "Discord webhook URL (optional, press Enter to skip)"
 
@@ -287,8 +284,6 @@ function Start-ConfigWizard {
 }
 
 function New-EnvFile {
-    Write-Header "Creating Environment File"
-
     $envContent = @"
 # Database Configuration
 DB_TYPE=$dbType
@@ -315,17 +310,13 @@ Host__ImportsPathSegment=imports
 Host__OwnerUid=1000
 Host__OwnerGid=1000
 
-# Optional: CurseForge Integration
+# Optional Integrations
 $(if ($curseforgeKey) { "CurseForge__ApiKey=$curseforgeKey" } else { "# CurseForge__ApiKey=" })
-
-# Optional: Discord Integration
 $(if ($discordWebhook) { "Discord__WebhookUrl=$discordWebhook" } else { "# Discord__WebhookUrl=" })
 
 # Ports
 API_PORT=$apiPort
 WEB_PORT=$webPort
-
-# Minecraft server ports (published from the API container)
 MC_PORT_RANGE=$mcPortRange
 MC_EXTRA_PORTS=$mcExtraPorts
 
@@ -339,241 +330,219 @@ Logging__LogLevel__Microsoft.AspNetCore=Warning
 }
 
 function New-Directories {
-    Write-Header "Creating Directories"
-
     New-Item -ItemType Directory -Force -Path "$baseDir\servers" | Out-Null
     New-Item -ItemType Directory -Force -Path "$baseDir\profiles" | Out-Null
     New-Item -ItemType Directory -Force -Path "$baseDir\backups" | Out-Null
     New-Item -ItemType Directory -Force -Path "$baseDir\archives" | Out-Null
     New-Item -ItemType Directory -Force -Path "$baseDir\imports" | Out-Null
     New-Item -ItemType Directory -Force -Path ".\data" | Out-Null
-
-    Write-Success "Created required directories"
-}
-
-function Get-ComposeServices {
-    $r = Invoke-ComposeOrThrow -Args @("config", "--services") -What "reading compose services"
-    return ($r.Output -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-}
-
-function Get-ContainerIdForService {
-    param([string]$Service)
-    $r = Invoke-Compose -Args @("ps", "-q", $Service)
-    if ($r.ExitCode -ne 0) { return "" }
-    return $r.Output.ToString().Trim()
-}
-
-function Get-ContainerState {
-    param([string]$ContainerId)
-    if ([string]::IsNullOrWhiteSpace($ContainerId)) { return $null }
-
-    $json = (docker inspect -f "{{json .State}}" $ContainerId 2>$null).ToString().Trim()
-    if ([string]::IsNullOrWhiteSpace($json)) { return $null }
-
-    try {
-        $state = $json | ConvertFrom-Json
-    } catch {
-        return $null
-    }
-
-    $healthStatus = $null
-    if ($state.PSObject.Properties.Name -contains "Health") {
-        $healthStatus = $state.Health.Status
-    }
-
-    return [pscustomobject]@{
-        Status   = $state.Status
-        Health   = $healthStatus
-        ExitCode = $state.ExitCode
-    }
-}
-
-function Show-ServiceFailureDetails {
-    param([string]$Service)
-
-    Write-Error-Custom "Service '$Service' failed to become ready."
-    $cid = Get-ContainerIdForService -Service $Service
-    if ($cid) {
-        $state = Get-ContainerState -ContainerId $cid
-        if ($state) {
-            Write-Info "Container state: status=$($state.Status) health=$($state.Health) exitCode=$($state.ExitCode)"
-        }
-        Write-Info "Last 200 log lines for '$Service':"
-        [void](Invoke-Compose -Args @("logs", "--no-color", "--tail", "200", $Service))
-    } else {
-        Write-Info "No container id found for service '$Service'. Compose might not have created it."
-        [void](Invoke-Compose -Args @("ps"))
-    }
-}
-
-function Wait-For-ServicesReady {
-    param(
-        [int]$TimeoutSeconds = 120,
-        [int]$PollSeconds = 2
-    )
-
-    $services = Get-ComposeServices
-    if (-not $services -or $services.Count -eq 0) {
-        Write-Warn "Could not determine services from compose config; skipping readiness wait."
-        return $true
-    }
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-
-    while ((Get-Date) -lt $deadline) {
-        $allReady = $true
-        $badService = $null
-
-        foreach ($svc in $services) {
-            $cid = Get-ContainerIdForService -Service $svc
-            $state = Get-ContainerState -ContainerId $cid
-
-            if (-not $state) {
-                $allReady = $false
-                continue
-            }
-
-            if ($state.Status -eq "exited") {
-                $badService = $svc
-                $allReady = $false
-                break
-            }
-
-            $hasHealth = ($state.Health -and $state.Health -ne "<no value>" -and $state.Health -ne "")
-            if ($hasHealth) {
-                if ($state.Health -eq "unhealthy") {
-                    $badService = $svc
-                    $allReady = $false
-                    break
-                }
-                if ($state.Health -ne "healthy") {
-                    $allReady = $false
-                }
-            } else {
-                if ($state.Status -ne "running") {
-                    $allReady = $false
-                }
-            }
-        }
-
-        if ($badService) {
-            Show-ServiceFailureDetails -Service $badService
-            return $false
-        }
-
-        if ($allReady) {
-            return $true
-        }
-
-        Start-Sleep -Seconds $PollSeconds
-    }
-
-    Write-Error-Custom "Timed out after $TimeoutSeconds seconds waiting for services to start."
-    foreach ($svc in (Get-ComposeServices)) {
-        $cid = Get-ContainerIdForService -Service $svc
-        $state = Get-ContainerState -ContainerId $cid
-        if (-not $state) {
-            Write-Warn "Service '$svc' has no container yet."
-            continue
-        }
-
-        $hasHealth = ($state.Health -and $state.Health -ne "<no value>" -and $state.Health -ne "")
-        $ready = if ($hasHealth) { $state.Health -eq "healthy" } else { $state.Status -eq "running" }
-
-        if (-not $ready) {
-            Show-ServiceFailureDetails -Service $svc
-        }
-    }
-
-    return $false
+    Write-Success "Created directories"
 }
 
 function Start-Services {
-    Write-Header "Starting Services"
+    param([switch]$Rebuild)
 
-    Write-Info "Starting Docker Compose services..."
-    $r = Invoke-Compose -Args @("up", "-d")
+    Write-Info "Starting services..."
+
+    if ($Rebuild) {
+        Write-Info "Building images (this may take a few minutes)..."
+        $build = Invoke-Compose -Args @("build", "--progress", "plain") -StreamOutput
+        if ($build.ExitCode -ne 0) {
+            Write-Error-Custom "Build failed"
+            exit 1
+        }
+        $r = Invoke-Compose -Args @("up", "-d", "--force-recreate")
+    } else {
+        $r = Invoke-Compose -Args @("up", "-d")
+    }
+
     if ($r.ExitCode -ne 0) {
-        Write-Error-Custom "Compose up failed (exit code $($r.ExitCode))."
+        Write-Error-Custom "Failed to start services"
         Write-Host $r.Output
         exit 1
     }
 
-    Write-Info "Waiting for services to become ready (timeout: 120s)..."
-    $ok = Wait-For-ServicesReady -TimeoutSeconds 120 -PollSeconds 2
+    Write-Info "Waiting for services to be ready..."
+    Start-Sleep -Seconds 5
 
-    if (-not $ok) {
-        Write-Error-Custom "One or more services failed to start."
-        Write-Info "You can inspect full status with: $composeCmdText ps"
-        Write-Info "And logs with: $composeCmdText logs -f"
-        exit 1
-    }
-
-    Write-Success "Services started and look ready!"
+    Write-Success "Services started!"
 }
 
-function Show-Guide {
-    Write-Header "Setup Complete!"
-
-    Write-Host "MineOS is now running!" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Access URLs:"
-    Write-Host "  Web UI:    " -NoNewline
-    Write-Host "http://localhost:$webPort" -ForegroundColor Cyan
-    Write-Host "  API:       " -NoNewline
-    Write-Host "http://localhost:$apiPort" -ForegroundColor Cyan
-    Write-Host "  API Docs:  " -NoNewline
-    Write-Host "http://localhost:$apiPort/swagger" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Minecraft ports exposed:"
-    Write-Host "  Range:     $mcPortRange (TCP/UDP)" -ForegroundColor Cyan
-    if (-not [string]::IsNullOrWhiteSpace($mcExtraPorts)) {
-        Write-Host "  Extra:     $mcExtraPorts (note: only used if you wire them into docker-compose.yml)" -ForegroundColor Yellow
+function Stop-Services {
+    Write-Info "Stopping services..."
+    $r = Invoke-Compose -Args @("down")
+    if ($r.ExitCode -eq 0) {
+        Write-Success "Services stopped"
+    } else {
+        Write-Error-Custom "Failed to stop services"
+        Write-Host $r.Output
     }
-    Write-Host ""
-    Write-Host "Admin Credentials:"
-    Write-Host "  Username:  $adminUser" -ForegroundColor Cyan
-    Write-Host "  Password:  $adminPass" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "API Key (for programmatic access):"
-    Write-Host "  $apiKey" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Useful Commands:"
-    Write-Host "  View logs:        $composeCmdText logs -f"
-    Write-Host "  Status:           $composeCmdText ps"
-    Write-Host "  Stop services:    $composeCmdText down"
-    Write-Host "  Restart services: $composeCmdText restart"
-    Write-Host "  Update services:  $composeCmdText pull; $composeCmdText up -d"
-    Write-Host ""
-    Write-Success "Setup completed successfully!"
 }
 
-function Main {
-    Clear-Host
-    Write-Header "MineOS Setup"
+function Restart-Services {
+    Write-Info "Restarting services..."
+    $r = Invoke-Compose -Args @("restart")
+    if ($r.ExitCode -eq 0) {
+        Write-Success "Services restarted"
+    } else {
+        Write-Error-Custom "Failed to restart services"
+    }
+}
 
-    Write-Info "Welcome to MineOS! This script will help you get started."
-    Write-Host ""
+function Show-Logs {
+    Write-Info "Showing logs (Ctrl+C to exit)..."
+    & $script:composeExe @script:composeBaseArgs "logs" "-f" "--tail" "100"
+}
 
-    Test-Dependencies
+function Do-FreshInstall {
+    Write-Header "Fresh Install"
 
     if (Test-Path ".env") {
-        Write-Warn ".env file already exists!"
-        $reconfigure = Read-Host "Do you want to reconfigure? This will overwrite existing settings. (y/N)"
-        if ($reconfigure -ne "y" -and $reconfigure -ne "Y") {
-            Write-Info "Using existing configuration"
-            Load-ExistingConfig
-            Start-Services
-            Show-Guide
+        Write-Warn "Existing installation detected!"
+        $confirm = Read-Host "This will OVERWRITE your configuration. Continue? (y/N)"
+        if ($confirm -ne "y" -and $confirm -ne "Y") {
+            Write-Info "Cancelled"
             return
         }
     }
 
+    Test-Dependencies
     Start-ConfigWizard
     New-EnvFile
     New-Directories
-    Start-Services
-    Show-Guide
+    Start-Services -Rebuild
+
+    Write-Header "Installation Complete!"
+    Write-Host ""
+    Write-Host "Web UI:    http://localhost:$webPort" -ForegroundColor Green
+    Write-Host "Username:  $adminUser" -ForegroundColor Cyan
+    Write-Host "Password:  $adminPass" -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Do-Rebuild {
+    Write-Header "Rebuild"
+
+    if (-not (Test-Path ".env")) {
+        Write-Error-Custom "No installation found. Run fresh install first."
+        return
+    }
+
+    Write-Info "This will rebuild the Docker images and restart services."
+    Write-Info "Your configuration and data will be preserved."
+    $confirm = Read-Host "Continue? (Y/n)"
+    if ($confirm -eq "n" -or $confirm -eq "N") {
+        Write-Info "Cancelled"
+        return
+    }
+
+    Load-ExistingConfig
+    Start-Services -Rebuild
+
+    Write-Success "Rebuild complete!"
+    Write-Host "Web UI: http://localhost:$webPort" -ForegroundColor Green
+}
+
+function Do-Update {
+    Write-Header "Update"
+
+    if (-not (Test-Path ".env")) {
+        Write-Error-Custom "No installation found. Run fresh install first."
+        return
+    }
+
+    Write-Info "Pulling latest code and rebuilding..."
+
+    # Pull latest if in git repo
+    if (Test-Path ".git") {
+        Write-Info "Pulling latest changes..."
+        git pull
+    }
+
+    Load-ExistingConfig
+    Start-Services -Rebuild
+
+    Write-Success "Update complete!"
+    Write-Host "Web UI: http://localhost:$webPort" -ForegroundColor Green
+}
+
+function Show-Menu {
+    Clear-Host
+    Write-Host ""
+    Write-Host "  __  __ _            ___  ____  " -ForegroundColor Green
+    Write-Host " |  \/  (_)_ __   ___|_ _|/ ___| " -ForegroundColor Green
+    Write-Host " | |\/| | | '_ \ / _ \| | \___ \ " -ForegroundColor Green
+    Write-Host " | |  | | | | | |  __/| |  ___) |" -ForegroundColor Green
+    Write-Host " |_|  |_|_|_| |_|\___|___||____/ " -ForegroundColor Green
+    Write-Host ""
+    Write-Host " Minecraft Server Management" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "================================" -ForegroundColor DarkGray
+
+    $installed = Test-Path ".env"
+    if ($installed) {
+        Load-ExistingConfig
+        Write-Host " Status: " -NoNewline
+        Write-Host "Installed" -ForegroundColor Green
+    } else {
+        Write-Host " Status: " -NoNewline
+        Write-Host "Not Installed" -ForegroundColor Yellow
+    }
+
+    Write-Host "================================" -ForegroundColor DarkGray
+    Write-Host ""
+
+    if (-not $installed) {
+        Write-Host " [1] Fresh Install" -ForegroundColor White
+        Write-Host ""
+        Write-Host " [Q] Quit" -ForegroundColor DarkGray
+    } else {
+        Write-Host " [1] Start Services" -ForegroundColor White
+        Write-Host " [2] Stop Services" -ForegroundColor White
+        Write-Host " [3] Restart Services" -ForegroundColor White
+        Write-Host " [4] View Logs" -ForegroundColor White
+        Write-Host " [5] Show Status" -ForegroundColor White
+        Write-Host ""
+        Write-Host " [6] Rebuild (keep config)" -ForegroundColor Yellow
+        Write-Host " [7] Update (git pull + rebuild)" -ForegroundColor Yellow
+        Write-Host " [8] Fresh Install (reset everything)" -ForegroundColor Red
+        Write-Host ""
+        Write-Host " [Q] Quit" -ForegroundColor DarkGray
+    }
+
+    Write-Host ""
+    $choice = Read-Host "Select option"
+    return $choice
+}
+
+function Main {
+    Test-Dependencies
+
+    while ($true) {
+        $choice = Show-Menu
+        $installed = Test-Path ".env"
+
+        if (-not $installed) {
+            switch ($choice.ToUpper()) {
+                "1" { Do-FreshInstall; Read-Host "Press Enter to continue" }
+                "Q" { Write-Host "Goodbye!"; exit 0 }
+                default { Write-Warn "Invalid option" }
+            }
+        } else {
+            switch ($choice.ToUpper()) {
+                "1" { Load-ExistingConfig; Start-Services; Read-Host "Press Enter to continue" }
+                "2" { Stop-Services; Read-Host "Press Enter to continue" }
+                "3" { Restart-Services; Read-Host "Press Enter to continue" }
+                "4" { Show-Logs }
+                "5" { Show-Status; Read-Host "Press Enter to continue" }
+                "6" { Do-Rebuild; Read-Host "Press Enter to continue" }
+                "7" { Do-Update; Read-Host "Press Enter to continue" }
+                "8" { Do-FreshInstall; Read-Host "Press Enter to continue" }
+                "Q" { Write-Host "Goodbye!"; exit 0 }
+                default { Write-Warn "Invalid option" }
+            }
+        }
+    }
 }
 
 Main
