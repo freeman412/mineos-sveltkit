@@ -376,8 +376,10 @@
 
 	.console-header {
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: space-between;
 		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.tab-bar {
@@ -386,6 +388,8 @@
 		background: #121725;
 		padding: 0.35rem;
 		border-radius: 10px;
+		overflow-x: auto;
+		max-width: 100%;
 	}
 
 	.tab-button {
@@ -397,6 +401,8 @@
 		font-size: 0.9rem;
 		cursor: pointer;
 		transition: background 0.2s, color 0.2s;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 
 	.tab-button.active {
