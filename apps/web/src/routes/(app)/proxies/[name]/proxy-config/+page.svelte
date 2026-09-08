@@ -597,6 +597,9 @@
 	.field input[type='text'],
 	.field input[type='number'],
 	.field select {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
 		padding: 0.4rem 0.6rem;
 		background: var(--input-bg);
 		border: 1px solid var(--border-color);
@@ -620,7 +623,8 @@
 	}
 
 	.field.checkbox .label {
-		flex: 1 1 auto;
+		flex: 1 1 0%;
+		min-width: 0;
 	}
 
 	.field.checkbox .help {
@@ -722,6 +726,9 @@
 	.server-row select,
 	.try-row select,
 	.forced-head input {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
 		padding: 0.35rem 0.55rem;
 		background: var(--input-bg);
 		border: 1px solid var(--border-color);
