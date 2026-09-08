@@ -24,6 +24,7 @@ type envDefault struct {
 // New features should add entries here so upgrades pick them up automatically.
 var requiredEnvDefaults = []envDefault{
 	{key: "MINEOS_SHUTDOWN_TIMEOUT", value: "300", comment: "# Server shutdown timeout (seconds)"},
+	{key: "MINEOS_RESTART_WARNING_SECONDS", value: "60", comment: "# In-game warning before a restart (seconds, 0 disables)"},
 	{key: "MINEOS_TELEMETRY_ENABLED", value: "true", comment: "# Telemetry"},
 	{key: "MINEOS_TELEMETRY_ENDPOINT", value: "https://mineos.net"},
 	{key: "MINEOS_INSTALLATION_ID", generator: func() string { return uuid.New().String() }},

@@ -34,7 +34,7 @@ func TestGracefulStop_ForceStopsImmediately(t *testing.T) {
 	fake := &fakeRunner{}
 	var out bytes.Buffer
 
-	err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 60, true, &out)
+	err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 60, 0, true, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestGracefulStop_GracefulUsesShortDockerTimeout(t *testing.T) {
 	fake := &fakeRunner{}
 	var out bytes.Buffer
 
-	err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 120, false, &out)
+	err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 120, 0, false, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +72,25 @@ func TestGracefulStop_ComposeErrorPropagates(t *testing.T) {
 	fake := &fakeRunner{err: errBoom}
 	var out bytes.Buffer
 
-	if err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 60, true, &out); err == nil {
+	if err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 60, 0, true, &out); err == nil {
 		t.Fatal("compose failure must propagate")
+	}
+}
+
+func TestGracefulStop_WarningFailureDoesNotBlockTheStop(t *testing.T) {
+	fake := &fakeRunner{}
+	var out bytes.Buffer
+
+	// Warnings are on, but the API is unreachable: the countdown cannot run.
+	err := gracefulStop(context.Background(), unreachableLoadConfig(t), fake, config.Config{}, 60, 60, false, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("an unwarnable restart must still stop compose, got %v", fake.calls)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("Warning:")) {
+		t.Fatal("failing to warn players must surface as a warning, not silence")
 	}
 }
 

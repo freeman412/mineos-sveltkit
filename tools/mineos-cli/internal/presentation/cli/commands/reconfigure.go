@@ -66,6 +66,7 @@ func runReconfigure(cmd *cobra.Command, loadConfig *usecases.LoadConfigUseCase) 
 	currentMinecraftHost := fallback(values["PUBLIC_MINECRAFT_HOST"], "localhost")
 	currentBodySize := fallback(values["BODY_SIZE_LIMIT"], defaultBodySizeLimit)
 	currentShutdownTimeout := parseEnvInt(values["MINEOS_SHUTDOWN_TIMEOUT"], defaultShutdownTimeout)
+	currentRestartWarning := parseEnvInt(values["MINEOS_RESTART_WARNING_SECONDS"], defaultRestartWarning)
 	currentCurseforge := values["CurseForge__ApiKey"]
 	currentDiscord := values["Discord__WebhookUrl"]
 	currentNetworkMode := fallback(values["MINEOS_NETWORK_MODE"], defaultNetworkMode)
@@ -130,6 +131,11 @@ func runReconfigure(cmd *cobra.Command, loadConfig *usecases.LoadConfigUseCase) 
 	}
 
 	shutdownTimeout, err := promptInt(reader, out, "Server shutdown timeout (seconds)", currentShutdownTimeout)
+	if err != nil {
+		return err
+	}
+
+	restartWarning, err := promptInt(reader, out, "In-game restart warning (seconds, 0 disables)", currentRestartWarning)
 	if err != nil {
 		return err
 	}
@@ -236,6 +242,9 @@ func runReconfigure(cmd *cobra.Command, loadConfig *usecases.LoadConfigUseCase) 
 		return err
 	}
 	if err := setEnvFileValue(envPath, "MINEOS_SHUTDOWN_TIMEOUT", strconv.Itoa(shutdownTimeout)); err != nil {
+		return err
+	}
+	if err := setEnvFileValue(envPath, "MINEOS_RESTART_WARNING_SECONDS", strconv.Itoa(restartWarning)); err != nil {
 		return err
 	}
 	if err := setEnvFileValue(envPath, "MINEOS_NETWORK_MODE", networkMode); err != nil {

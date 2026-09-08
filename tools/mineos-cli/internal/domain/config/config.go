@@ -1,26 +1,27 @@
 package config
 
 type Config struct {
-	EnvPath            string
-	ApiPort            string
-	WebOrigin          string
-	NetworkMode        string
-	BuildFromSource    string
-	ImageTag           string
-	ApiKeySeed         string
-	ApiKeyStatic       string
-	ManagementApiKey   string
-	MinecraftHost      string
-	BodySizeLimit      string
-	DatabaseType       string
-	DatabaseConnection string
-	DataDirectory      string
-	ShutdownTimeout    string
-	PreReleaseUpdates  string // "true" to enable pre-release updates, "false" for stable only
-	TelemetryEnabled   string // "true" to enable telemetry, "false" to disable
-	TelemetryEndpoint  string // URL for telemetry endpoint
-	InstallationID     string // UUID for this installation
-	TelemetryKey       string // Bearer token for telemetry API
+	EnvPath               string
+	ApiPort               string
+	WebOrigin             string
+	NetworkMode           string
+	BuildFromSource       string
+	ImageTag              string
+	ApiKeySeed            string
+	ApiKeyStatic          string
+	ManagementApiKey      string
+	MinecraftHost         string
+	BodySizeLimit         string
+	DatabaseType          string
+	DatabaseConnection    string
+	DataDirectory         string
+	ShutdownTimeout       string
+	RestartWarningSeconds string // seconds of in-game warning before a graceful stop; "0" disables
+	PreReleaseUpdates     string // "true" to enable pre-release updates, "false" for stable only
+	TelemetryEnabled      string // "true" to enable telemetry, "false" to disable
+	TelemetryEndpoint     string // URL for telemetry endpoint
+	InstallationID        string // UUID for this installation
+	TelemetryKey          string // Bearer token for telemetry API
 }
 
 func (c Config) EffectiveApiKey() string {

@@ -10,6 +10,7 @@ import (
 
 func NewUpdateCommand(loadConfig *usecases.LoadConfigUseCase, currentVersion string) *cobra.Command {
 	var timeout int
+	var warnBefore int
 	var skipCli bool
 	var skipStack bool
 	var force bool
@@ -30,7 +31,8 @@ Examples:
   mineos update              # Update CLI + containers
   mineos update --skip-cli   # Only update containers (pull + recreate)
   mineos update --skip-stack # Only update CLI binary
-  mineos update --prerelease # Include pre-release versions`,
+  mineos update --prerelease # Include pre-release versions
+  mineos update --warn-seconds 0  # Skip the in-game restart warning`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 
@@ -58,6 +60,9 @@ Examples:
 				if timeout > 0 {
 					_ = stackCmd.Flags().Set("timeout", fmt.Sprintf("%d", timeout))
 				}
+				if warnBefore >= 0 {
+					_ = stackCmd.Flags().Set("warn-seconds", fmt.Sprintf("%d", warnBefore))
+				}
 				if err := stackCmd.RunE(cmd, []string{}); err != nil {
 					return fmt.Errorf("stack update failed: %w", err)
 				}
@@ -70,6 +75,7 @@ Examples:
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before restarting (0 disables; default from .env)")
 	cmd.Flags().BoolVar(&skipCli, "skip-cli", false, "Skip CLI binary upgrade, only update containers")
 	cmd.Flags().BoolVar(&skipStack, "skip-stack", false, "Skip container update, only upgrade CLI binary")
 	cmd.Flags().BoolVar(&force, "force", false, "Force CLI upgrade even if already on latest")

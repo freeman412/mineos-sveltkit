@@ -79,6 +79,7 @@ func NewStackUpCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 func NewStackStopCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 	var force bool
 	var timeout int
+	var warnBefore int
 
 	cmd := &cobra.Command{
 		Use:   "stop",
@@ -92,12 +93,14 @@ func NewStackStopCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command 
 				return err
 			}
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			return gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, force, out)
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			return gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, force, out)
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Force stop servers immediately")
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
@@ -106,6 +109,7 @@ func NewStackRestartCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comma
 	var wait bool
 	var waitTimeout int
 	var timeout int
+	var warnBefore int
 
 	cmd := &cobra.Command{
 		Use:   "restart",
@@ -119,7 +123,8 @@ func NewStackRestartCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comma
 				return err
 			}
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, false, out); err != nil {
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, false, out); err != nil {
 				return err
 			}
 			if err := compose.run([]string{"up", "-d"}); err != nil {
@@ -137,12 +142,14 @@ func NewStackRestartCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comma
 	cmd.Flags().BoolVar(&wait, "wait", true, "Wait for API health after restart")
 	cmd.Flags().IntVar(&waitTimeout, "wait-timeout", 60, "Seconds to wait for API health")
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
 
 func NewStackDownCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 	var timeout int
+	var warnBefore int
 	var volumes bool
 
 	cmd := &cobra.Command{
@@ -157,7 +164,8 @@ func NewStackDownCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command 
 				return err
 			}
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, false, out); err != nil {
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, false, out); err != nil {
 				return err
 			}
 			return compose.down(volumes)
@@ -166,6 +174,7 @@ func NewStackDownCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command 
 
 	cmd.Flags().BoolVar(&volumes, "volumes", false, "Also remove Docker volumes")
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
@@ -249,6 +258,7 @@ func NewStackBuildCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command
 
 func NewStackRecreateCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 	var timeout int
+	var warnBefore int
 
 	cmd := &cobra.Command{
 		Use:   "recreate",
@@ -262,7 +272,8 @@ func NewStackRecreateCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comm
 				return err
 			}
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, false, out); err != nil {
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, false, out); err != nil {
 				return err
 			}
 			if err := compose.down(false); err != nil {
@@ -276,12 +287,14 @@ func NewStackRecreateCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comm
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
 
 func NewStackRebuildCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 	var timeout int
+	var warnBefore int
 
 	cmd := &cobra.Command{
 		Use:   "rebuild",
@@ -295,7 +308,8 @@ func NewStackRebuildCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comma
 				return err
 			}
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, false, out); err != nil {
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, false, out); err != nil {
 				return err
 			}
 			if err := compose.down(false); err != nil {
@@ -316,12 +330,14 @@ func NewStackRebuildCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comma
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
 
 func NewStackRebuildSourceCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 	var timeout int
+	var warnBefore int
 
 	cmd := &cobra.Command{
 		Use:     "rebuild-source",
@@ -336,7 +352,8 @@ func NewStackRebuildSourceCommand(loadConfig *usecases.LoadConfigUseCase) *cobra
 				return err
 			}
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, false, out); err != nil {
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, false, out); err != nil {
 				return err
 			}
 			if err := compose.down(false); err != nil {
@@ -351,12 +368,14 @@ func NewStackRebuildSourceCommand(loadConfig *usecases.LoadConfigUseCase) *cobra
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
 
 func NewStackUpdateCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Command {
 	var timeout int
+	var warnBefore int
 
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -384,7 +403,8 @@ func NewStackUpdateCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comman
 			}
 
 			timeoutSeconds := effectiveShutdownTimeout(cfg, timeout)
-			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, false, out); err != nil {
+			warnSeconds := effectiveRestartWarning(cfg, warnBefore)
+			if err := gracefulStop(ctx, loadConfig, compose, cfg, timeoutSeconds, warnSeconds, false, out); err != nil {
 				return err
 			}
 
@@ -394,6 +414,7 @@ func NewStackUpdateCommand(loadConfig *usecases.LoadConfigUseCase) *cobra.Comman
 	}
 
 	cmd.Flags().IntVar(&timeout, "timeout", 0, "Shutdown timeout in seconds (default from .env)")
+	cmd.Flags().IntVar(&warnBefore, "warn-seconds", -1, "Seconds to warn in-game players before stopping (0 disables; default from .env)")
 
 	return cmd
 }
@@ -466,7 +487,7 @@ type stackRunner interface {
 	run(args []string) error
 }
 
-func gracefulStop(ctx context.Context, loadConfig *usecases.LoadConfigUseCase, compose stackRunner, cfg config.Config, timeoutSeconds int, force bool, out io.Writer) error {
+func gracefulStop(ctx context.Context, loadConfig *usecases.LoadConfigUseCase, compose stackRunner, cfg config.Config, timeoutSeconds, warnSeconds int, force bool, out io.Writer) error {
 	if force {
 		fmt.Fprintln(out, "Force stop enabled; killing servers and stopping containers immediately.")
 		if err := stopMinecraftServers(ctx, loadConfig, out, true, timeoutSeconds); err != nil {
@@ -476,6 +497,14 @@ func gracefulStop(ctx context.Context, loadConfig *usecases.LoadConfigUseCase, c
 			return err
 		}
 		return nil
+	}
+
+	// Give anyone in-game a heads-up before their world goes away.
+	if err := warnPlayersOfRestart(ctx, loadConfig, out, warnSeconds); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Warning: could not warn players: %v\n", err)
 	}
 
 	if err := stopMinecraftServers(ctx, loadConfig, out, false, timeoutSeconds); err != nil {
