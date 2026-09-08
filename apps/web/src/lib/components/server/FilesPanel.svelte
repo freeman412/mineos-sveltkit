@@ -203,6 +203,7 @@
 			{#if files.length === 0}
 				<p class="empty">No files or directories</p>
 			{:else}
+				<div class="table-scroll">
 				<table>
 					<thead>
 						<tr>
@@ -251,6 +252,7 @@
 						{/each}
 					</tbody>
 				</table>
+				</div>
 			{/if}
 		</div>
 
@@ -383,8 +385,13 @@
 		color: var(--mc-text, #eef0f8);
 	}
 
+	.table-scroll {
+		overflow-x: auto;
+	}
+
 	table {
 		width: 100%;
+		min-width: 480px;
 		border-collapse: collapse;
 	}
 
@@ -585,5 +592,17 @@
 	.upload-btn {
 		display: inline-flex;
 		align-items: center;
+	}
+
+	@media (max-width: 900px) {
+		.content {
+			grid-template-columns: 1fr;
+		}
+
+		.toolbar {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.75rem;
+		}
 	}
 </style>
