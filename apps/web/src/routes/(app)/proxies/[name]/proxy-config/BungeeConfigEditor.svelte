@@ -584,6 +584,9 @@
 	.field input[type='text'],
 	.field input[type='number'],
 	.field select {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
 		padding: 0.4rem 0.6rem;
 		background: var(--input-bg, #1f2937);
 		border: 1px solid var(--border-color, #374151);
@@ -607,7 +610,8 @@
 	}
 
 	.field.checkbox .label {
-		flex: 1 1 auto;
+		flex: 1 1 0%;
+		min-width: 0;
 	}
 
 	.field.checkbox .help {
@@ -646,6 +650,9 @@
 
 	.server-row input,
 	.try-row input {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
 		padding: 0.35rem 0.55rem;
 		background: var(--input-bg, #1f2937);
 		border: 1px solid var(--border-color, #374151);
@@ -653,6 +660,20 @@
 		color: inherit;
 		font-size: 0.85rem;
 		font-family: inherit;
+	}
+
+	@media (max-width: 720px) {
+		.server-row {
+			grid-template-columns: 1fr;
+		}
+
+		.server-row.two-col {
+			grid-template-columns: 1fr;
+		}
+
+		.try-row {
+			grid-template-columns: 1fr;
+		}
 	}
 
 	.restricted-toggle {

@@ -29,6 +29,7 @@
 	let recentProfileIds = $state<string[]>([]);
 	let actionBusy = $state<string | null>(null);
 	let mineosVersion = $state<string | null>(null);
+	let searchPlaceholder = $state('Search servers, profiles...');
 
 	const minQueryLength = 2;
 	const maxResults = 8;
@@ -65,6 +66,14 @@
 			const res = await api.getMeta(fetch);
 			if (res.data?.version) mineosVersion = res.data.version;
 		})();
+
+		const narrowQuery = window.matchMedia('(max-width: 480px)');
+		const updatePlaceholder = () => {
+			searchPlaceholder = narrowQuery.matches ? 'Search...' : 'Search servers, profiles...';
+		};
+		updatePlaceholder();
+		narrowQuery.addEventListener('change', updatePlaceholder);
+		return () => narrowQuery.removeEventListener('change', updatePlaceholder);
 	});
 
 	function loadRecent(key: string): string[] {
@@ -351,7 +360,7 @@
 		<input
 			bind:this={searchInput}
 			type="text"
-			placeholder="Search servers, profiles..."
+			placeholder={searchPlaceholder}
 			bind:value={query}
 			onfocus={handleSearchFocus}
 			onblur={handleSearchBlur}
@@ -557,6 +566,7 @@
 		font-size: 14px;
 		font-family: inherit;
 		transition: all 0.2s;
+		text-overflow: ellipsis;
 	}
 
 	.topbar-search input:focus {

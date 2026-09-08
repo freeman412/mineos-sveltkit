@@ -497,7 +497,8 @@
 
 		.server-side {
 			width: 100%;
-			justify-content: space-between;
+			flex-direction: column;
+			align-items: stretch;
 			margin-left: 0;
 		}
 
